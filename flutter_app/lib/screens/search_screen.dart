@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'home_screen.dart';
 
 class SearchScreen extends StatelessWidget {
   const SearchScreen({super.key});
@@ -139,10 +140,20 @@ class SearchScreen extends StatelessWidget {
           ),
         ],
         onTap: (index) {
-          //there will be navigation here
+          if (index == 0) {
+            // Home
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (context) => const HomeScreen(),
+              ),
+            );
+          } else if (index == 2) {
+            // Upload 
 
 
 
+          }
         },
       ),
     );
