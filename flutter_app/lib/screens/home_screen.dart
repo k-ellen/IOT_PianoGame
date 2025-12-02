@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
+import '../widgets/my_button.dart';
 
 class HomeScreen extends StatelessWidget {
   //HomeScreen is a screen that doesnt change
@@ -40,34 +41,19 @@ class HomeScreen extends StatelessWidget {
                 height: 32,
               ), //space between the logo and the button
 
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent,
-                  padding: const EdgeInsets.symmetric(
-                    //distance inside the button between the text and its edges
-                    horizontal: 40,
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20), //rounded corners
-                  ),
-                ),
+              MyButton(
+                title: 'Get Started',
+                color: Colors.greenAccent,
                 onPressed: () {
+                  //when the button is pressed
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (context) => const SearchScreen(),
+                      builder: (context) =>
+                          const SearchScreen(), //go to the search screen
                     ),
                   );
                 },
-                child: const Text(
-                  "Let's Play",
-                  style: TextStyle(
-                    color: Colors.black,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
               ),
             ],
           ),

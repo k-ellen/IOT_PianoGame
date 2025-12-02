@@ -12,9 +12,9 @@ class MyHeader extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment
           .spaceBetween, //One is pushed to the left edge the other to the right edge
       children: [
-        const Text(
-          'Search',
-          style: TextStyle(
+        Text(
+          title,
+          style: const TextStyle(
             color: Colors.white,
             fontSize: 32,
             fontWeight: FontWeight.bold,

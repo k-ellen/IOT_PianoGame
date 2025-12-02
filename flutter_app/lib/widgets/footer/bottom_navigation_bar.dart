@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../screens/home_screen.dart';
+import '../../screens/search_screen.dart';
+import '../../screens/upload_screen.dart';
 
 class MyBottomNavigationBar extends StatelessWidget {
   final int currentIndex;
@@ -22,13 +24,21 @@ class MyBottomNavigationBar extends StatelessWidget {
         ),
       ],
       onTap: (index) {
-        if (index == 0) {
+        if (index == 0 && currentIndex != 0) {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (context) => const HomeScreen()),
           );
-        } else if (index == 2) {
-          // Upload action here
+        } else if (index == 1 && currentIndex != 1) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const SearchScreen()),
+          );
+        } else if (index == 2 && currentIndex != 2) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => UploadScreen()),
+          );
         }
       },
     );
