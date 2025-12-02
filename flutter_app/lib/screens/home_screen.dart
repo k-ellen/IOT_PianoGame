@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 
-class HomeScreen extends StatelessWidget {  //HomeScreen is a screen that doesnt change
-  const HomeScreen({super.key});  //constructor
+class HomeScreen extends StatelessWidget {
+  //HomeScreen is a screen that doesnt change
+  const HomeScreen({super.key}); //constructor
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1E1E1E), 
+      backgroundColor: const Color(0xFF1E1E1E),
       body: SafeArea(
         child: Center(
           child: Column(
-            mainAxisSize: MainAxisSize.min, //A column will only hold what it needs
+            mainAxisSize:
+                MainAxisSize.min, //A column will only hold what it needs
             children: [
               ClipRRect(
                 borderRadius: BorderRadius.circular(32),
@@ -22,7 +24,9 @@ class HomeScreen extends StatelessWidget {  //HomeScreen is a screen that doesnt
                   fit: BoxFit.cover,
                 ),
               ),
-              const SizedBox(height: 24), //24 pixel space between image and text
+              const SizedBox(
+                height: 24,
+              ), //24 pixel space between image and text
               const Text(
                 'Piano Teacher',
                 style: TextStyle(
@@ -32,17 +36,20 @@ class HomeScreen extends StatelessWidget {  //HomeScreen is a screen that doesnt
                 ),
               ),
 
-              const SizedBox(height: 32), //space between the logo and the button
+              const SizedBox(
+                height: 32,
+              ), //space between the logo and the button
 
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.greenAccent, 
-                  padding: const EdgeInsets.symmetric(  //distance inside the button between the text and its edges
+                  backgroundColor: Colors.greenAccent,
+                  padding: const EdgeInsets.symmetric(
+                    //distance inside the button between the text and its edges
                     horizontal: 40,
                     vertical: 14,
                   ),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(20),  //rounded corners
+                    borderRadius: BorderRadius.circular(20), //rounded corners
                   ),
                 ),
                 onPressed: () {
@@ -62,7 +69,6 @@ class HomeScreen extends StatelessWidget {  //HomeScreen is a screen that doesnt
                   ),
                 ),
               ),
-
             ],
           ),
         ),
