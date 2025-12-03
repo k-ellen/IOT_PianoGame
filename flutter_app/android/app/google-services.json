@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "219780326252",
+    "project_id": "piano-project-7a1c7",
+    "storage_bucket": "piano-project-7a1c7.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:219780326252:android:8a0e56a22f8321f29f0949",
+        "android_client_info": {
+          "package_name": "com.example.flutter_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBAHgt2XnTMVrszo5si6pJAMABw2WlR4cA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

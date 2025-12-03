@@ -9,6 +9,7 @@ class FilterCard extends StatelessWidget {
   final bool centerBig;
 
   const FilterCard({
+    super.key,
     required this.color,
     required this.label,
     this.centerBig = false,

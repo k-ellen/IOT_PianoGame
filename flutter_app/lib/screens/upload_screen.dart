@@ -7,6 +7,8 @@ import '../widgets/footer/bottom_navigation_bar.dart';
 import 'package:dotted_border/dotted_border.dart';
 
 class UploadScreen extends StatefulWidget {
+  const UploadScreen({super.key});
+
   @override
   _UploadScreenState createState() => _UploadScreenState();
 }
@@ -55,7 +57,7 @@ class _UploadScreenState extends State<UploadScreen> {
               MyHeader(title: 'Upload'),
 
               const SizedBox(height: 24), //space
-
+              // Upload Area
               DottedBorder(
                 options: RoundedRectDottedBorderOptions(
                   color: Colors.white70,
