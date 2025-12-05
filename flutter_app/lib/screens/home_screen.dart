@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import '../widgets/my_button.dart';
+import 'package:flutter_app/services/global_songs_import.dart';
+
 
 class HomeScreen extends StatelessWidget {
   //HomeScreen is a screen that doesnt change
@@ -55,10 +57,35 @@ class HomeScreen extends StatelessWidget {
                   );
                 },
               ),
-            ],
+
+
+              //(Development Tool
+              //Runs a process that imports all global songs into Firestore
+              const SizedBox(height: 16),
+              ElevatedButton(
+              onPressed: () async {
+                try {
+                  await importGlobalSongsToFirestore();   //The button runs the function that imports all songs into the Firestore database
+
+                  ScaffoldMessenger.of(context).showSnackBar(   //The app displays a Snackbar at the bottom of the screen which indicates that the import was successful
+                    const SnackBar(content: Text("Import completed")),
+                  );
+                } catch (e, st) {
+                  print('Import error: $e');
+                  print(st);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Import error: $e")),
+                  );
+                }
+              },
+            child: const Text("Import Global Songs"),
+          ),
+              ],
           ),
         ),
       ),
     );
   }
+
+  
 }
