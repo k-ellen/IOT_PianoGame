@@ -4,17 +4,17 @@ import 'package:firebase_storage/firebase_storage.dart';
 
 
 //Scans the entire "Global Songs" folder in Firebase Storage
-//inds all MIDI files within it and imports them into Firestore as documents in the songs collection
+//finds all MIDI files within it and imports them into Firestore as documents in the songs collection
 Future<void> importGlobalSongsToFirestore() async {
   final firestore = FirebaseFirestore.instance;
   final storage = FirebaseStorage.instance;
 
-  final rootRef = storage.ref('Global Songs');
+  final rootRef = storage.ref('Global Songs');    //Gives a Reference that points to a folder in Storage
 
 
   //A recursive function that Scans a folder in Firebase Storage finds MIDI files in it
   // and adds their information to Firestore
-  Future<void> walkFolder(Reference folderRef) async {    //walkFolder receives a folder and scans it
+  Future<void> walkFolder(Reference folderRef) async {   
     final listResult = await folderRef.listAll();
 
     for (final fileRef in listResult.items) {

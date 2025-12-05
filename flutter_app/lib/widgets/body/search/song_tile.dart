@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 
 class SongTile extends StatelessWidget {
   final String title;
-  final String artist;
-  final String source;
-  final int index;  //the row number in the list to select a color by position
+  final String artist;   
+  final String genre;          
+  final int index;       //the row number in the list to select a color by position
   final VoidCallback onTap;
 
   const SongTile({
     super.key,
     required this.title,
     required this.artist,
-    required this.source,
+    required this.genre,   
     required this.index,
     required this.onTap,
   });
@@ -50,7 +50,7 @@ class SongTile extends StatelessWidget {
 
             const SizedBox(width: 16),  //space so that the text does not stick to the square
 
-            Expanded(   //the text take up all the space left in the line
+            Expanded(   //the text takes up all the space left in the line
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,   //aligned to the left
                 children: [
@@ -64,17 +64,21 @@ class SongTile extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 4),
+
                   Text(
-                    artist,
+                    artist,        
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white70,
                       fontSize: 14,
                     ),
                   ),
+
                   const SizedBox(height: 2),
+
                   Text(
-                    source,
+                    genre,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(
                       color: Colors.white38,
                       fontSize: 12,
