@@ -6,7 +6,6 @@ import '../widgets/footer/bottom_navigation_bar.dart';
 import '../models/song.dart';
 import 'package:flutter_app/widgets/body/search/song_tile.dart';
 
-
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
 
@@ -15,11 +14,21 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  Set<SongSource> _selectedSources = {
-    SongSource.internet,
-    SongSource.global,
-    SongSource.private,
-  };
+  Set<String> _selectedGenres = {};
+  List<String> _availableGenres = [];
+  late final ScrollController _scrollController;
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = ScrollController();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -56,6 +65,7 @@ class _SearchScreenState extends State<SearchScreen> {
                 child: StreamBuilder<QuerySnapshot>(    //every time there is a change in Firestor the screen will automatically update
                   stream: FirebaseFirestore.instance
                       .collection('songs')
+                      //.limit(200)
                       .snapshots(),
                   builder: (context, snapshot) {
                     if (snapshot.hasError) {
@@ -77,20 +87,15 @@ class _SearchScreenState extends State<SearchScreen> {
                         .map((doc) => Song.fromDoc(doc))
                         .toList();
 
+                    final genresSet = allSongs.map((s) => s.genre).toSet();
+                    final genresList = genresSet.toList()..sort();
+
+                    _availableGenres = genresList;
+                    _selectedGenres = _selectedGenres.intersection(genresSet);
+
                     final filteredSongs = allSongs.where((song) {
-                      if (song.source == 'internet' &&
-                          _selectedSources.contains(SongSource.internet)) {
-                        return true;
-                      }
-                      if (song.source == 'global' &&
-                          _selectedSources.contains(SongSource.global)) {
-                        return true;
-                      }
-                      if (song.source == 'private' &&
-                          _selectedSources.contains(SongSource.private)) {
-                        return true;
-                      }
-                      return false;
+                      if (_selectedGenres.isEmpty) return true;
+                      return _selectedGenres.contains(song.genre);
                     }).toList();
 
                     if (filteredSongs.isEmpty) {
@@ -102,26 +107,31 @@ class _SearchScreenState extends State<SearchScreen> {
                       );
                     }
 
-                    return ListView.builder(    //displays the songs on the screen
-                      itemCount: filteredSongs.length,
-                      itemBuilder: (context, index) {
-                        final song = filteredSongs[index];
-                        return SongTile(
-                          title: song.name,
-                          artist: song.artist,
-                          source: song.source,
-                          index: index,
-                          onTap: () {
+                    return Scrollbar(
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      child: ListView.builder(    //displays the songs on the screen
+                        controller: _scrollController,
+                        itemCount: filteredSongs.length,
+                        itemBuilder: (context, index) {
+                          final song = filteredSongs[index];
+                          return SongTile(
+                            title: song.name,
+                            artist: song.artist,
+                            genre: song.genre,
+                            index: index,
+                            onTap: () {
 
 
 
-                            //to be continued..
+                              //to be continued..
 
 
 
-                          },
-                        );
-                      },
+                            },
+                          );
+                        },
+                      ),
                     );
                   },
                 ),
@@ -135,28 +145,30 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   void _openFiltersSheet() async {    //the filters window
-    final newSelection = await showModalBottomSheet<Set<SongSource>>(   //the function waits until the user clicks "Apply" or closes
+    final currentSelection = Set<String>.from(_selectedGenres);
+
+    final newSelection = await showModalBottomSheet<Set<String>>(   //the function waits until the user clicks "Apply" or closes
       context: context,
       backgroundColor: const Color(0xFF2A2A2A),
       builder: (context) {
-        Set<SongSource> tempSelection = Set.from(_selectedSources);
+        Set<String> tempSelection = Set.from(currentSelection);
 
         return StatefulBuilder(
           builder: (context, setModalState) {
-            Widget buildCheckbox(SongSource source, String label) {   //a function that creates one checkbox
+            Widget buildCheckbox(String genre) {   //a function that creates one checkbox
               return CheckboxListTile(
-                value: tempSelection.contains(source),
+                value: tempSelection.contains(genre),
                 onChanged: (value) {
                   setModalState(() {
                     if (value == true) {
-                      tempSelection.add(source);
+                      tempSelection.add(genre);
                     } else {
-                      tempSelection.remove(source);
+                      tempSelection.remove(genre);
                     }
                   });
                 },
                 title: Text(
-                  label,
+                  genre,
                   style: const TextStyle(color: Colors.white),
                 ),
                 activeColor: const Color.fromARGB(255, 5, 229, 5),
@@ -171,7 +183,7 @@ class _SearchScreenState extends State<SearchScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     const Text(
-                      'Filter by source',
+                      'Filter by genre',
                       style: TextStyle(
                         color: Colors.white,
                         fontSize: 18,
@@ -179,9 +191,15 @@ class _SearchScreenState extends State<SearchScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    buildCheckbox(SongSource.internet, 'Internet'),
-                    buildCheckbox(SongSource.global, 'Global'),
-                    buildCheckbox(SongSource.private, 'Private'),
+
+                    SizedBox(
+                      height: 300,
+                      child: ListView(
+                        children:
+                            _availableGenres.map(buildCheckbox).toList(),
+                      ),
+                    ),
+
                     const SizedBox(height: 12),
                     ElevatedButton(
                       onPressed: () {
@@ -200,7 +218,7 @@ class _SearchScreenState extends State<SearchScreen> {
 
     if (newSelection != null) {   //after closing the window updating the main screen
       setState(() {
-        _selectedSources = newSelection;
+        _selectedGenres = newSelection;
       });
     }
   }
