@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 class MyButton extends StatelessWidget {
   final String title;
   final Color color;
-  final VoidCallback onPressed;
+  final VoidCallback? onPressed;
 
   const MyButton({
     super.key,
@@ -17,6 +17,9 @@ class MyButton extends StatelessWidget {
     return ElevatedButton(
       style: ElevatedButton.styleFrom(
         backgroundColor: color,
+        disabledBackgroundColor: color.withAlpha(
+          (color.a * 255.0 * 0.5).round().clamp(0, 255),
+        ),
         padding: const EdgeInsets.symmetric(
           //distance inside the button between the text and its edges
           horizontal: 60,
