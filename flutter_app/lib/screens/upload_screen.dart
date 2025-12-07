@@ -7,6 +7,7 @@ import '../widgets/footer/bottom_navigation_bar.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class UploadScreen extends StatefulWidget {
   const UploadScreen({super.key});
@@ -54,14 +55,23 @@ class _UploadScreenState extends State<UploadScreen> {
       setState(() => _isUploading = true);
 
       final fileName = _selectedFile!.path.split('/').last;
-      final storageRef = FirebaseStorage.instance.ref().child(
-        "uploadedSongs/$fileName",
+      final storagePath = "uploadedSongs/$fileName";
+      final storageRef = FirebaseStorage.instance.ref().child(storagePath);
+
+      bool storageExists = false;
+      try {
+        await storageRef.getDownloadURL();
+        await storageRef.putFile(_selectedFile!);
+      } catch (e) {
+        print("File already exists in Storage, skipping upload.");
+      }
+
+      // Add Firestore document
+      final displayName = fileName.replaceAll('.mid', '');
+      await _addSongToFirestore(
+        displayName: displayName,
+        storagePath: storagePath,
       );
-
-      await storageRef.putFile(_selectedFile!);
-
-      final downloadUrl = await storageRef.getDownloadURL();
-      print("Uploaded successfully! URL: $downloadUrl");
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("File uploaded successfully!")),
@@ -76,6 +86,49 @@ class _UploadScreenState extends State<UploadScreen> {
       ).showSnackBar(const SnackBar(content: Text("Error uploading file")));
     } finally {
       setState(() => _isUploading = false);
+    }
+  }
+
+  Future<void> _addSongToFirestore({
+    required String displayName,
+    required String storagePath,
+  }) async {
+    final firestore = FirebaseFirestore.instance;
+
+    print("Checking if song exists in Firestore…");
+    final firestoreQuery = await firestore
+        .collection("songs")
+        .where("storagePath", isEqualTo: storagePath)
+        .limit(1)
+        .get();
+
+    bool firestoreExists = firestoreQuery.docs.isNotEmpty;
+
+    if (!firestoreExists) {
+      print("Adding document to Firestore…");
+
+      await firestore.collection('songs').add({
+        'name': displayName, // e.g. "MySong"
+        'artist': 'Unknown', // can later be extracted
+        'genre': 'User Upload', // or categorize later
+        'storagePath': storagePath, // Firebase Storage path
+        'source': 'user', // you differentiate from "global"
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      print("Added to Firestore!");
+    } else {
+      print("Document already exists in Firestore, skipping writing.");
+    }
+
+    print("Firestore: Added $displayName");
+  }
+
+  Future<void> _openBasicPitchDemo() async {
+    final Uri url = Uri.parse('https://basicpitch.spotify.com/');
+
+    if (!await launchUrl(url)) {
+      throw 'Could not launch $url';
     }
   }
 
@@ -106,7 +159,7 @@ class _UploadScreenState extends State<UploadScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(16),
                   width: double.infinity,
-                  height: MediaQuery.of(context).size.height * 0.75,
+                  height: MediaQuery.of(context).size.height * 0.65,
                   decoration: BoxDecoration(
                     color: const Color.fromARGB(255, 54, 54, 54),
                     borderRadius: BorderRadius.circular(16),
@@ -151,19 +204,24 @@ class _UploadScreenState extends State<UploadScreen> {
               ),
 
               const SizedBox(height: 40), //space
-              // _isUploading
-              //     ? const Padding(
-              //         padding: EdgeInsets.all(12.0),
-              //         child: CircularProgressIndicator(
-              //           strokeWidth: 3,
-              //           color: Colors.greenAccent,
-              //         ),
-              //       )
-              //     : MyButton(
-              //         title: 'Upload',
-              //         color: Colors.greenAccent,
-              //         onPressed: () => _uploadFile(),
-              //       ),
+
+              ElevatedButton(
+                onPressed: _openBasicPitchDemo,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.greenAccent,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 40,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4), //rounded corners
+                  ),
+                ),
+                child: const Text(
+                  'Open mp3 to MIDI Conversion Tool',
+                  style: TextStyle(color: Colors.black, fontSize: 19),
+                ),
+              ),
             ],
           ),
         ),
