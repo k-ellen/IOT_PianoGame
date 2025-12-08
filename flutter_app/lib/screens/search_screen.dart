@@ -5,6 +5,7 @@ import '../widgets/body/search/search_bar.dart';
 import '../widgets/footer/bottom_navigation_bar.dart';
 import '../models/song.dart';
 import 'package:flutter_app/widgets/body/search/song_tile.dart';
+import 'package:flutter_app/screens/song_screen.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -122,7 +123,16 @@ class _SearchScreenState extends State<SearchScreen> {
                             genre: song.genre,
                             index: index,
                             onTap: () {
-                              //to be continued..
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => SongScreen(
+                                    storagePath: song.storagePath,
+                                    title: song.name,
+                                    artist: song.artist,
+                                  ),
+                                ),
+                              );
                             },
                           );
                         },

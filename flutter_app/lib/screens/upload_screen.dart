@@ -58,7 +58,6 @@ class _UploadScreenState extends State<UploadScreen> {
       final storagePath = "uploadedSongs/$fileName";
       final storageRef = FirebaseStorage.instance.ref().child(storagePath);
 
-      bool storageExists = false;
       try {
         await storageRef.getDownloadURL();
         await storageRef.putFile(_selectedFile!);

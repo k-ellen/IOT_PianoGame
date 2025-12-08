@@ -1,37 +1,159 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
-import 'dart:io';
 import 'package:flutter_app/widgets/header/my_header.dart';
 import 'package:flutter_app/widgets/my_button.dart';
 import '../widgets/footer/bottom_navigation_bar.dart';
-import 'package:dotted_border/dotted_border.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'dart:async';
 
-class SongScreen extends StatelessWidget {
+class SongScreen extends StatefulWidget {
   final String storagePath;
+  final String title;
+  final String artist;
 
-  const SongScreen({super.key, required this.storagePath});
+  const SongScreen({
+    super.key,
+    required this.storagePath,
+    required this.title,
+    required this.artist,
+  });
+
+  @override
+  _SongScreenState createState() => _SongScreenState();
+}
+
+class _SongScreenState extends State<SongScreen> {
+  bool isPlaying = false; // track playback status
+
+  late final DatabaseReference ref;
+  late final StreamSubscription<DatabaseEvent> subscription;
+
+  @override
+  void initState() {
+    super.initState();
+
+    ref = FirebaseDatabase.instance.ref("esp32API/playCommand");
+
+    // Listen for changes in Realtime Database
+    subscription = ref.onValue.listen((DatabaseEvent event) {
+      final data = event.snapshot.value as Map<dynamic, dynamic>?;
+
+      if (data != null && mounted) {
+        setState(() {
+          isPlaying = (data["status"] ?? "stopped") == "playing";
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    subscription.cancel(); // stop listening when widget is disposed
+    super.dispose();
+  }
+
+  // Send a playback command to Firebase
+  Future<void> sendPlaybackCommandRTDB({required bool play}) async {
+    // Read current values
+    final snapshot = await ref.get();
+    int currentCount = 0;
+
+    if (snapshot.exists) {
+      final data = snapshot.value as Map<dynamic, dynamic>;
+      currentCount = (data["commandsCounter"] ?? 0) as int;
+    }
+
+    // Write updated values
+    await ref.set({
+      "commandsCounter": currentCount + 1,
+      "fileToPlay": widget.storagePath,
+      "playMode": 0,
+      "status": play ? "playing" : "stopped",
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF1E1E1E),
-
       body: SingleChildScrollView(
-        //allows scrolling of all content if there is not enough height
         child: Padding(
-          padding: const EdgeInsets.all(16.0), //adds space around all content.
+          padding: const EdgeInsets.all(16.0),
           child: Column(
-            //starting from top to bottom
             crossAxisAlignment: CrossAxisAlignment.center,
-            children: [MyHeader(title: 'Song')],
+            children: [
+              MyHeader(title: 'Song'),
+              const SizedBox(height: 24),
+              Container(
+                width: double.infinity,
+                height: MediaQuery.of(context).size.height * 0.45,
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFFD54F),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Icon(
+                  Icons.music_note,
+                  size: 128,
+                  color: Colors.black,
+                ),
+              ),
+              const SizedBox(height: 40),
+              Text(
+                widget.title,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                widget.artist,
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 18,
+                  fontWeight: FontWeight.normal,
+                ),
+              ),
+              const SizedBox(height: 60),
+              ElevatedButton(
+                onPressed: () async {
+                  try {
+                    await sendPlaybackCommandRTDB(play: !isPlaying);
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          isPlaying ? "Playback stopped!" : "Playback started!",
+                        ),
+                      ),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text("Error: $e")));
+                  }
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isPlaying
+                      ? Colors.redAccent
+                      : Colors.blueAccent,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 40,
+                    vertical: 14,
+                  ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                child: Text(
+                  isPlaying ? "Stop Song" : "Learn Song",
+                  style: const TextStyle(color: Colors.white, fontSize: 19),
+                ),
+              ),
+            ],
           ),
         ),
       ),
-
-      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 3),
+      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 0),
     );
   }
 }

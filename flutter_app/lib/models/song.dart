@@ -8,6 +8,7 @@ class Song {
   final String artist;
   final String source;
   final String genre;
+  final String storagePath;
 
   Song({
     required this.id,
@@ -15,6 +16,7 @@ class Song {
     required this.artist,
     required this.source,
     required this.genre,
+    required this.storagePath,
   });
 
   factory Song.fromDoc(DocumentSnapshot doc) {
@@ -26,6 +28,7 @@ class Song {
       artist: data['artist'] ?? 'Unknown artist',
       source: data['source'] ?? 'global',
       genre: data['genre'] ?? 'Unknown',
+      storagePath: data['storagePath'] ?? 'Unknown',
     );
   }
 }
