@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 
 class MySearchBar extends StatelessWidget {
-  const MySearchBar({super.key});
+  final ValueChanged<String>? onChanged;  
+
+  const MySearchBar({super.key, this.onChanged});
 
   @override
   Widget build(BuildContext context) {
     return TextField(
-      //the search bar
+      onChanged: onChanged,   
       decoration: InputDecoration(
         hintText: 'Artists, songs (Piano ver)',
         hintStyle: const TextStyle(color: Colors.grey),

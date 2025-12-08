@@ -18,6 +18,7 @@ class _SearchScreenState extends State<SearchScreen> {
   Set<String> _selectedGenres = {};
   List<String> _availableGenres = [];
   late final ScrollController _scrollController;
+    String _searchText = '';
 
   @override
   void initState() {
@@ -43,7 +44,13 @@ class _SearchScreenState extends State<SearchScreen> {
             children: [
               MyHeader(title: 'Search'),
               const SizedBox(height: 24),
-              const MySearchBar(),
+              MySearchBar(
+              onChanged: (value) {
+                setState(() {
+                  _searchText = value.toLowerCase(); 
+                });
+              },
+            ),
 
               const SizedBox(height: 16),
 
@@ -89,15 +96,37 @@ class _SearchScreenState extends State<SearchScreen> {
                         .toList();
 
                     final genresSet = allSongs.map((s) => s.genre).toSet();
-                    final genresList = genresSet.toList()..sort();
+                    final genresList = genresSet.toList();
+
+                    genresList.sort((a, b) {
+                      if (a == "User Upload") return -1;  
+                      if (b == "User Upload") return 1;    
+                      return a.compareTo(b);               
+                    });
+
+                    _availableGenres = genresList;
 
                     _availableGenres = genresList;
                     _selectedGenres = _selectedGenres.intersection(genresSet);
 
                     final filteredSongs = allSongs.where((song) {
-                      if (_selectedGenres.isEmpty) return true;
-                      return _selectedGenres.contains(song.genre);
-                    }).toList();
+                    if (_selectedGenres.isNotEmpty &&
+                        !_selectedGenres.contains(song.genre)) {
+                          return false;
+                    }
+
+                    if (_searchText.isNotEmpty) {
+                      final q = _searchText;
+                      final inName   = song.name.toLowerCase().contains(q);
+                      final inArtist = song.artist.toLowerCase().contains(q);
+
+                      if (!inName && !inArtist) {
+                        return false;
+                      }
+                    }
+
+                    return true;
+                  }).toList();
 
                     if (filteredSongs.isEmpty) {
                       return const Center(
