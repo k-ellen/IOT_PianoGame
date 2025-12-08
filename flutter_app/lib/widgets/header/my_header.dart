@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 
 class MyHeader extends StatelessWidget {
   final String title;
+  final bool isBackButton;
 
-  const MyHeader({super.key, required this.title});
+  const MyHeader({super.key, required this.title, this.isBackButton = false});
 
   @override
   Widget build(BuildContext context) {
@@ -12,6 +13,13 @@ class MyHeader extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment
           .spaceBetween, //One is pushed to the left edge the other to the right edge
       children: [
+        if (isBackButton)
+          IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () {
+              Navigator.pop(context);
+            },
+          ),
         Text(
           title,
           style: const TextStyle(

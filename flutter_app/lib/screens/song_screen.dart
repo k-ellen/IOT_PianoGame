@@ -5,16 +5,21 @@ import '../widgets/footer/bottom_navigation_bar.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'dart:async';
 
+// Import the default previous screen (change this to your actual SearchScreen import)
+import 'search_screen.dart';
+
 class SongScreen extends StatefulWidget {
   final String storagePath;
   final String title;
   final String artist;
+  final Widget? previousScreen; // optional previous screen
 
   const SongScreen({
     super.key,
     required this.storagePath,
     required this.title,
     required this.artist,
+    this.previousScreen, // default will be SearchScreen
   });
 
   @override
@@ -51,9 +56,7 @@ class _SongScreenState extends State<SongScreen> {
     super.dispose();
   }
 
-  // Send a playback command to Firebase
   Future<void> sendPlaybackCommandRTDB({required bool play}) async {
-    // Read current values
     final snapshot = await ref.get();
     int currentCount = 0;
 
@@ -62,7 +65,6 @@ class _SongScreenState extends State<SongScreen> {
       currentCount = (data["commandsCounter"] ?? 0) as int;
     }
 
-    // Write updated values
     await ref.set({
       "commandsCounter": currentCount + 1,
       "fileToPlay": widget.storagePath,
@@ -81,7 +83,9 @@ class _SongScreenState extends State<SongScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              MyHeader(title: 'Song'),
+              // Top back button + header
+              MyHeader(title: 'Song', isBackButton: true),
+
               const SizedBox(height: 24),
               Container(
                 width: double.infinity,
@@ -145,7 +149,7 @@ class _SongScreenState extends State<SongScreen> {
                   ),
                 ),
                 child: Text(
-                  isPlaying ? "Stop Song" : "Learn Song",
+                  isPlaying ? "Stop" : "Play",
                   style: const TextStyle(color: Colors.white, fontSize: 19),
                 ),
               ),
