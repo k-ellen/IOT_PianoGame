@@ -1,34 +1,30 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_app/widgets/header/my_header.dart';
-import 'package:flutter_app/widgets/my_button.dart';
-import '../widgets/footer/bottom_navigation_bar.dart';
 import 'package:firebase_database/firebase_database.dart';
+import '../widgets/header/my_header.dart';
+import '../widgets/footer/bottom_navigation_bar.dart';
+import '../widgets/my_button.dart';
 import 'dart:async';
-
-// Import the default previous screen (change this to your actual SearchScreen import)
-import 'search_screen.dart';
 
 class SongScreen extends StatefulWidget {
   final String storagePath;
   final String title;
   final String artist;
-  final Widget? previousScreen; // optional previous screen
 
   const SongScreen({
     super.key,
     required this.storagePath,
     required this.title,
     required this.artist,
-    this.previousScreen, // default will be SearchScreen
   });
 
   @override
-  _SongScreenState createState() => _SongScreenState();
+  State<SongScreen> createState() => _SongScreenState();
 }
 
 class _SongScreenState extends State<SongScreen> {
-  bool isPlaying = false; // track playback status
-
+  bool isPlaying = false;
+  bool _canPop = false; // initially prevent pop
+  int? _pendingNavIndex;
   late final DatabaseReference ref;
   late final StreamSubscription<DatabaseEvent> subscription;
 
@@ -38,10 +34,9 @@ class _SongScreenState extends State<SongScreen> {
 
     ref = FirebaseDatabase.instance.ref("esp32API/playCommand");
 
-    // Listen for changes in Realtime Database
-    subscription = ref.onValue.listen((DatabaseEvent event) {
+    // Listen for live status updates
+    subscription = ref.onValue.listen((event) {
       final data = event.snapshot.value as Map<dynamic, dynamic>?;
-
       if (data != null && mounted) {
         setState(() {
           isPlaying = (data["status"] ?? "stopped") == "playing";
@@ -52,41 +47,131 @@ class _SongScreenState extends State<SongScreen> {
 
   @override
   void dispose() {
-    subscription.cancel(); // stop listening when widget is disposed
+    subscription.cancel();
     super.dispose();
   }
 
-  Future<void> sendPlaybackCommandRTDB({required bool play}) async {
+  Future<void> sendPlaybackCommand(bool play) async {
     final snapshot = await ref.get();
-    int currentCount = 0;
+    int count = 0;
 
     if (snapshot.exists) {
       final data = snapshot.value as Map<dynamic, dynamic>;
-      currentCount = (data["commandsCounter"] ?? 0) as int;
+      count = (data["commandsCounter"] ?? 0) as int;
     }
 
     await ref.set({
-      "commandsCounter": currentCount + 1,
+      "commandsCounter": count + 1,
       "fileToPlay": widget.storagePath,
       "playMode": 0,
       "status": play ? "playing" : "stopped",
     });
   }
 
+  Future<void> _showExitDialog() async {
+    final shouldLeave = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text("Stop playing?"),
+        content: const Text("Do you want to stop the song before leaving?"),
+        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        titleTextStyle: TextStyle(
+          color: Colors.white,
+          fontSize: 25,
+          fontWeight: FontWeight.bold,
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Stay"),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () async {
+              await sendPlaybackCommand(false); // stop song
+              Navigator.pop(context, true); // close dialog
+            },
+            child: const Text("Stop & Leave"),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldLeave == true) {
+      // User chose Stop & Leave
+      if (_pendingNavIndex != null) {
+        _navigateToTab(_pendingNavIndex!);
+        return;
+      }
+
+      // Default pop if not coming from bottom nav
+      setState(() => _canPop = true);
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// When bottom nav is tapped
+  Future<void> _handleNavLeave(int index) async {
+    if (isPlaying) {
+      _pendingNavIndex = index;
+      await _showExitDialog();
+    } else {
+      _navigateToTab(index);
+    }
+  }
+
+  void _navigateToTab(int index) {
+    if (!mounted) return;
+
+    if (index == 0) {
+      Navigator.pushReplacementNamed(context, "/home");
+    } else if (index == 1) {
+      Navigator.pushReplacementNamed(context, "/search");
+    } else if (index == 2) {
+      Navigator.pushReplacementNamed(context, "/upload");
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF1E1E1E),
-      body: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              // Top back button + header
-              MyHeader(title: 'Song', isBackButton: true),
+    return PopScope(
+      canPop: _canPop,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
 
-              const SizedBox(height: 24),
+        if (isPlaying) {
+          _showExitDialog();
+        } else {
+          setState(() => _canPop = true);
+          Navigator.pop(context);
+        }
+      },
+      child: Scaffold(
+        backgroundColor: const Color(0xFF1E1E1E),
+
+        // header with back button
+        appBar: PreferredSize(
+          preferredSize: const Size.fromHeight(60),
+          child: MyHeader(
+            title: "Song",
+            isBackButton: true,
+            onBack: () async {
+              if (isPlaying) {
+                await _showExitDialog();
+              } else {
+                Navigator.pop(context);
+              }
+            },
+          ),
+        ),
+
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
               Container(
                 width: double.infinity,
                 height: MediaQuery.of(context).size.height * 0.45,
@@ -100,7 +185,9 @@ class _SongScreenState extends State<SongScreen> {
                   color: Colors.black,
                 ),
               ),
+
               const SizedBox(height: 40),
+
               Text(
                 widget.title,
                 style: const TextStyle(
@@ -112,52 +199,27 @@ class _SongScreenState extends State<SongScreen> {
               const SizedBox(height: 8),
               Text(
                 widget.artist,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 18,
-                  fontWeight: FontWeight.normal,
-                ),
+                style: const TextStyle(color: Colors.white70, fontSize: 18),
               ),
               const SizedBox(height: 60),
-              ElevatedButton(
-                onPressed: () async {
-                  try {
-                    await sendPlaybackCommandRTDB(play: !isPlaying);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          isPlaying ? "Playback stopped!" : "Playback started!",
-                        ),
-                      ),
-                    );
-                  } catch (e) {
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text("Error: $e")));
-                  }
+
+              // Play / Stop button
+              MyButton(
+                title: isPlaying ? "Stop Song" : "Learn Song",
+                color: isPlaying ? Colors.redAccent : Colors.blueAccent,
+                onPressed: () {
+                  sendPlaybackCommand(!isPlaying);
                 },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: isPlaying
-                      ? Colors.redAccent
-                      : Colors.blueAccent,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 40,
-                    vertical: 14,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                child: Text(
-                  isPlaying ? "Stop" : "Play",
-                  style: const TextStyle(color: Colors.white, fontSize: 19),
-                ),
               ),
             ],
           ),
         ),
+
+        bottomNavigationBar: MyBottomNavigationBar(
+          currentIndex: 1,
+          onTap: _handleNavLeave,
+        ),
       ),
-      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 0),
     );
   }
 }

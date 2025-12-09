@@ -5,8 +5,13 @@ import '../../screens/upload_screen.dart';
 
 class MyBottomNavigationBar extends StatelessWidget {
   final int currentIndex;
+  final ValueChanged<int>? onTap;
 
-  const MyBottomNavigationBar({super.key, required this.currentIndex});
+  const MyBottomNavigationBar({
+    super.key,
+    required this.currentIndex,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -24,6 +29,10 @@ class MyBottomNavigationBar extends StatelessWidget {
         ),
       ],
       onTap: (index) {
+        if (onTap != null) {
+          onTap!(index);
+          return;
+        }
         if (index == 0 && currentIndex != 0) {
           Navigator.pushReplacement(
             context,

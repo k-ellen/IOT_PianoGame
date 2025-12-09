@@ -3,8 +3,14 @@ import 'package:flutter/material.dart';
 class MyHeader extends StatelessWidget {
   final String title;
   final bool isBackButton;
+  final VoidCallback? onBack;
 
-  const MyHeader({super.key, required this.title, this.isBackButton = false});
+  const MyHeader({
+    super.key,
+    required this.title,
+    this.isBackButton = false,
+    this.onBack = null,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -17,7 +23,11 @@ class MyHeader extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.white),
             onPressed: () {
-              Navigator.pop(context);
+              if (onBack != null) {
+                onBack!();
+              } else {
+                Navigator.pop(context);
+              }
             },
           ),
         Text(
