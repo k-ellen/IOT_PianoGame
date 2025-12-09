@@ -58,12 +58,7 @@ class _UploadScreenState extends State<UploadScreen> {
       final storagePath = "uploadedSongs/$fileName";
       final storageRef = FirebaseStorage.instance.ref().child(storagePath);
 
-      try {
-        await storageRef.getDownloadURL();
-        await storageRef.putFile(_selectedFile!);
-      } catch (e) {
-        print("File already exists in Storage, skipping upload.");
-      }
+      await storageRef.putFile(_selectedFile!);
 
       // Add Firestore document
       final displayName = fileName.replaceAll('.mid', '');
