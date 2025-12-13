@@ -51,7 +51,6 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
-  // ================= NORMALIZATION (exactly what we SHOW under the song) =================
 
   String _cleanGenre(dynamic raw) {
     final s = (raw ?? '').toString().trim();
@@ -76,11 +75,9 @@ class _SearchScreenState extends State<SearchScreen> {
     return 'UNKNOWN';
   }
 
-  // ✅ only these are allowed; everything else becomes UNKNOWN
   String _cleanDifficulty(dynamic raw) {
     final u = (raw ?? '').toString().trim().toUpperCase();
 
-    // Slow versions (must be checked first)
     if (u.contains('SLOW') && u.contains('BEGINNER')) return 'SLOW BEGINNER';
     if (u.contains('SLOW') && u.contains('EASY')) return 'SLOW EASY';
 
@@ -97,7 +94,6 @@ class _SearchScreenState extends State<SearchScreen> {
 
   bool _isUnknown(String v) => v.trim().toUpperCase() == 'UNKNOWN';
 
-  // ================= UI =================
 
   @override
   Widget build(BuildContext context) {
@@ -201,7 +197,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             final handsObj = diffVal['hands'];
                             if (handsObj is! Map<String, dynamic>) return;
 
-                            final diff = _cleanDifficulty(diffKey); // ✅ only known levels or UNKNOWN
+                            final diff = _cleanDifficulty(diffKey); 
 
                             handsObj.forEach((handKey, handVal) {
                               if (handVal is! Map<String, dynamic>) return;
