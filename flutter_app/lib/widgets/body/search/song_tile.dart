@@ -4,6 +4,8 @@ class SongTile extends StatelessWidget {
   final String title;
   final String artist;
   final String genre;
+  final String difficulties; 
+  final String hands; 
   final int index; //the row number in the list to select a color by position
   final VoidCallback onTap;
 
@@ -12,6 +14,8 @@ class SongTile extends StatelessWidget {
     required this.title,
     required this.artist,
     required this.genre,
+    required this.difficulties,
+    required this.hands,
     required this.index,
     required this.onTap,
   });
@@ -80,7 +84,7 @@ class SongTile extends StatelessWidget {
                   const SizedBox(height: 2),
 
                   Text(
-                    genre,
+                    '$genre  •  $difficulties  •  $hands',
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: Colors.white38, fontSize: 12),
                   ),

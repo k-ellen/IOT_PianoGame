@@ -53,6 +53,8 @@ Future<void> importGlobalSongsToFirestore() async {
         'genre': genreName,
         'storagePath': storagePath,
         'source': 'global',
+        'difficulties': 'UNKNOWN',
+        'hands': 'UNKNOWN',
       });
 
       print('Added: $displayName  [$genreName / $artistName]');
