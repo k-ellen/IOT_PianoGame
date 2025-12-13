@@ -127,6 +127,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     label: _selectedDifficulty ?? 'Difficulties',
                     icon: Icons.speed,
                     onTap: _openDifficultySheet,
+                    useEllipsis: _selectedDifficulty != null,
                   ),
                   _filterButton(
                     label: _selectedHands ?? 'Hands',
@@ -337,31 +338,51 @@ class _SearchScreenState extends State<SearchScreen> {
 
   // ================= Buttons =================
 
-  Widget _filterButton({
-    required String label,
-    required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    return Expanded(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: ElevatedButton.icon(
-          onPressed: onTap,
-          icon: Icon(icon, size: 18),
-          label: Text(
-            label,
-            overflow: TextOverflow.visible,
-            softWrap: false,
-            style: const TextStyle(fontSize: 13),
-          ),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.grey[800],
-            foregroundColor: Colors.white,
+ Widget _filterButton({
+  required String label,
+  required IconData icon,
+  required VoidCallback onTap,
+  bool useEllipsis = false,
+}) {
+  return Expanded(
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      child: ElevatedButton(
+        onPressed: onTap,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.grey[800],
+          foregroundColor: Colors.white,
+          alignment: Alignment.centerLeft,    
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+        ),
+        child: SizedBox(
+          width: double.infinity, 
+          child: Row(
+              mainAxisAlignment: MainAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Icon(icon, size: 18),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    softWrap: false,
+                    overflow: useEllipsis
+                        ? TextOverflow.ellipsis
+                        : TextOverflow.visible,
+                    style: const TextStyle(fontSize: 13),
+                    textAlign: TextAlign.start,
+                  ),
+                ),
+              ],
           ),
         ),
       ),
-    );
-  }
+    ),
+  );
+}
+
 
   // ================= Sheets =================
 
