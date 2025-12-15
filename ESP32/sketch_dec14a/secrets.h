@@ -17,3 +17,4 @@
 #define USER_PASSWORD   "Yardenk12345"
 
 #define STORAGE_BUCKET_ID  "piano-project-7a1c7.firebasestorage.app"
+// #define FIREBASE_PROJECT_ID "piano-project-7a1c7"
