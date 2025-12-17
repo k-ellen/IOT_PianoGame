@@ -50,6 +50,7 @@ class SongVariant {
   final String storagePath;
 
   final String sourceCollection; 
+  final String songId;
 
   SongVariant({
     required this.title,
@@ -59,5 +60,6 @@ class SongVariant {
     required this.hands,
     required this.storagePath,
     required this.sourceCollection,
+    required this.songId,
   });
 }

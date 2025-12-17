@@ -191,6 +191,7 @@ class _SearchScreenState extends State<SearchScreen> {
                               hands: hand,
                               storagePath: sp,
                               sourceCollection: 'songsNEW_midi',
+                              songId: doc.id,
                             ));
                           });
                         });
@@ -287,9 +288,12 @@ class _SearchScreenState extends State<SearchScreen> {
                                   context,
                                   MaterialPageRoute(
                                     builder: (_) => SongScreen(
-                                      storagePath: v.storagePath,
+                                      songId: v.songId,
                                       title: v.title,
                                       artist: v.artist,
+                                      initialDifficulty: v.difficulty,  
+                                      initialHands: v.hands,
+                                      
                                     ),
                                   ),
                                 );
