@@ -1,28 +1,28 @@
-import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
-import '../widgets/header/my_header.dart';
-import '../widgets/footer/bottom_navigation_bar.dart';
-import '../widgets/my_button.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:flutter/material.dart';
+
+import '../widgets/footer/bottom_navigation_bar.dart';
+import '../widgets/header/my_header.dart';
+import '../widgets/my_button.dart';
 
 class SongScreen extends StatefulWidget {
-final String songId;
-final String title;
-final String artist;
-final String initialDifficulty;
-final String initialHands;
+  final String songId;
+  final String title;
+  final String artist;
+  final String initialDifficulty;
+  final String initialHands;
 
   const SongScreen({
-  super.key,
-  required this.songId,
-  required this.title,
-  required this.artist,
-  required this.initialDifficulty,
-  required this.initialHands,
-});
+    super.key,
+    required this.songId,
+    required this.title,
+    required this.artist,
+    required this.initialDifficulty,
+    required this.initialHands,
+  });
 
   @override
   State<SongScreen> createState() => _SongScreenState();
@@ -30,30 +30,37 @@ final String initialHands;
 
 class _SongScreenState extends State<SongScreen> {
   bool isPlaying = false;
-  bool _canPop = false; // initially prevent pop
+
+  bool _canPop = false;
   int? _pendingNavIndex;
+
   late final DatabaseReference ref;
   late final StreamSubscription<DatabaseEvent> subscription;
+
   late String _selectedDifficulty;
   late String _selectedHands;
+
   String _currentStoragePath = '';
 
   @override
   void initState() {
     super.initState();
+
     _selectedDifficulty = widget.initialDifficulty;
     _selectedHands = widget.initialHands;
 
     ref = FirebaseDatabase.instance.ref("esp32API/playCommand");
 
-    // Listen for live status updates
     subscription = ref.onValue.listen((event) {
-      final data = event.snapshot.value as Map<dynamic, dynamic>?;
-      if (data != null && mounted) {
-        setState(() {
-          isPlaying = (data["status"] ?? "stopped") == "playing";
-        });
-      }
+      final Map<dynamic, dynamic>? data =
+          event.snapshot.value as Map<dynamic, dynamic>?;
+
+      if (!mounted) return;
+      if (data == null) return;
+
+      setState(() {
+        isPlaying = (data["status"] ?? "stopped") == "playing";
+      });
     });
   }
 
@@ -62,30 +69,32 @@ class _SongScreenState extends State<SongScreen> {
     subscription.cancel();
     super.dispose();
   }
+
   bool _isUnknownValue(String v) => v.trim().toUpperCase() == 'UNKNOWN';
 
   String _cleanDifficulty(dynamic raw) {
-  final u = (raw ?? '').toString().trim().toUpperCase();
+    final String u = (raw ?? '').toString().trim().toUpperCase();
 
-  if (u.contains('SLOW') && u.contains('BEGINNER')) return 'SLOW BEGINNER';
-  if (u.contains('SLOW') && u.contains('EASY')) return 'SLOW EASY';
+    if (u.contains('SLOW') && u.contains('BEGINNER')) return 'SLOW BEGINNER';
+    if (u.contains('SLOW') && u.contains('EASY')) return 'SLOW EASY';
 
-  if (u.contains('BEGINNER')) return 'BEGINNER';
-  if (u.contains('EASY')) return 'EASY';
-  if (u.contains('INTERMEDIATE')) return 'INTERMEDIATE';
-  if (u.contains('MEDIUM')) return 'INTERMEDIATE';
-  if (u.contains('HARD')) return 'HARD';
-  if (u.contains('ADVANCED')) return 'ADVANCED';
+    if (u.contains('BEGINNER')) return 'BEGINNER';
+    if (u.contains('EASY')) return 'EASY';
+    if (u.contains('INTERMEDIATE')) return 'INTERMEDIATE';
+    if (u.contains('MEDIUM')) return 'MEDIUM';
+    if (u.contains('HARD')) return 'HARD';
+    if (u.contains('ADVANCED')) return 'ADVANCED';
 
-  return 'UNKNOWN';
-}
+    return 'UNKNOWN';
+  }
 
   Future<void> sendPlaybackCommand(bool play, String path) async {
     final snapshot = await ref.get();
     int count = 0;
 
     if (snapshot.exists) {
-      final data = snapshot.value as Map<dynamic, dynamic>;
+      final Map<dynamic, dynamic> data =
+          snapshot.value as Map<dynamic, dynamic>;
       count = (data["commandsCounter"] ?? 0) as int;
     }
 
@@ -98,7 +107,7 @@ class _SongScreenState extends State<SongScreen> {
   }
 
   Future<void> _showExitDialog() async {
-    final shouldLeave = await showDialog<bool>(
+    final bool? shouldLeave = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
@@ -106,7 +115,7 @@ class _SongScreenState extends State<SongScreen> {
         content: const Text("Do you want to stop the song before leaving?"),
         backgroundColor: const Color.fromARGB(255, 23, 23, 23),
         contentTextStyle: const TextStyle(color: Colors.white),
-        titleTextStyle: TextStyle(
+        titleTextStyle: const TextStyle(
           color: Colors.white,
           fontSize: 25,
           fontWeight: FontWeight.bold,
@@ -120,8 +129,8 @@ class _SongScreenState extends State<SongScreen> {
           TextButton(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
             onPressed: () async {
-              await sendPlaybackCommand(false, _currentStoragePath); // stop song
-              Navigator.pop(context, true); // close dialog
+              await sendPlaybackCommand(false, _currentStoragePath);
+              if (context.mounted) Navigator.pop(context, true);
             },
             child: const Text("Stop & Leave"),
           ),
@@ -130,19 +139,16 @@ class _SongScreenState extends State<SongScreen> {
     );
 
     if (shouldLeave == true) {
-      // User chose Stop & Leave
       if (_pendingNavIndex != null) {
         _navigateToTab(_pendingNavIndex!);
         return;
       }
 
-      // Default pop if not coming from bottom nav
       setState(() => _canPop = true);
       Navigator.of(context).pop();
     }
   }
 
-  /// When bottom nav is tapped
   Future<void> _handleNavLeave(int index) async {
     if (isPlaying) {
       _pendingNavIndex = index;
@@ -166,6 +172,8 @@ class _SongScreenState extends State<SongScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final double topPad = MediaQuery.of(context).padding.top;
+
     return PopScope(
       canPop: _canPop,
       onPopInvoked: (didPop) {
@@ -181,19 +189,22 @@ class _SongScreenState extends State<SongScreen> {
       child: Scaffold(
         backgroundColor: const Color(0xFF1E1E1E),
 
-        // header with back button
+        // ✅ FIX: AppBar שמתחשב ב-status bar (כמו במסך Search)
         appBar: PreferredSize(
-          preferredSize: const Size.fromHeight(60),
-          child: MyHeader(
-            title: "Song",
-            isBackButton: true,
-            onBack: () async {
-              if (isPlaying) {
-                await _showExitDialog();
-              } else {
-                Navigator.pop(context);
-              }
-            },
+          preferredSize: Size.fromHeight(60 + topPad),
+          child: Padding(
+            padding: EdgeInsets.only(top: topPad),
+            child: MyHeader(
+              title: "Song",
+              isBackButton: true,
+              onBack: () async {
+                if (isPlaying) {
+                  await _showExitDialog();
+                } else {
+                  Navigator.pop(context);
+                }
+              },
+            ),
           ),
         ),
 
@@ -207,172 +218,187 @@ class _SongScreenState extends State<SongScreen> {
               return const Center(child: CircularProgressIndicator());
             }
 
-            final data = snap.data!.data() as Map<String, dynamic>? ?? {};
-          final diffs = data['difficulties'] as Map<String, dynamic>? ?? {};
+            final Map<String, dynamic> data =
+                snap.data!.data() as Map<String, dynamic>? ?? {};
+            final Map<String, dynamic> diffs =
+                data['difficulties'] as Map<String, dynamic>? ?? {};
 
-          final bool selectedIsUnknown =
-              _isUnknownValue(_cleanDifficulty(_selectedDifficulty));
+            final bool selectedIsUnknown =
+                _isUnknownValue(_cleanDifficulty(_selectedDifficulty));
 
-          final Map<String, String> nonUnknownDiffs = {};
-          String? unknownRawKey;
+            final Map<String, String> nonUnknownDiffs = {};
+            String? unknownRawKey;
 
-          for (final entry in diffs.entries) {
-            final rawKey = entry.key.toString();
-            final label = _cleanDifficulty(rawKey);
+            for (final entry in diffs.entries) {
+              final String rawKey = entry.key.toString();
+              final String label = _cleanDifficulty(rawKey);
 
-            if (_isUnknownValue(label)) {
-              unknownRawKey ??= rawKey;
-            } else {
-              nonUnknownDiffs[label] = rawKey;
+              if (_isUnknownValue(label)) {
+                unknownRawKey ??= rawKey;
+              } else {
+                nonUnknownDiffs[label] = rawKey;
+              }
             }
-          }
 
-          final List<String> availableDiffs = nonUnknownDiffs.keys.toList()..sort();
+            final List<String> availableDiffs = nonUnknownDiffs.keys.toList()
+              ..sort();
 
-          if (selectedIsUnknown && nonUnknownDiffs.isNotEmpty && unknownRawKey != null) {
-            availableDiffs.add('UNKNOWN');
-          }
+            if (selectedIsUnknown &&
+                nonUnknownDiffs.isNotEmpty &&
+                unknownRawKey != null) {
+              availableDiffs.add('UNKNOWN');
+            }
 
-          final Map<String, String> diffKeyByLabel = {
-            ...nonUnknownDiffs,
-            if (availableDiffs.contains('UNKNOWN') && unknownRawKey != null)
-              'UNKNOWN': unknownRawKey!,
-          };
+            final Map<String, String> diffKeyByLabel = {
+              ...nonUnknownDiffs,
+              if (availableDiffs.contains('UNKNOWN') && unknownRawKey != null)
+                'UNKNOWN': unknownRawKey!,
+            };
 
-          if (availableDiffs.isNotEmpty && !availableDiffs.contains(_selectedDifficulty)) {
-            _selectedDifficulty = availableDiffs.first;
-          }
+            if (availableDiffs.isNotEmpty &&
+                !availableDiffs.contains(_selectedDifficulty)) {
+              _selectedDifficulty = availableDiffs.first;
+            }
 
-          String selectedRawDiffKey = diffKeyByLabel[_selectedDifficulty] ?? '';
-          if (selectedRawDiffKey.isEmpty && diffs.isNotEmpty) {
-            selectedRawDiffKey = diffs.keys.first.toString(); // fallback
-          }
+            String selectedRawDiffKey = diffKeyByLabel[_selectedDifficulty] ?? '';
+            if (selectedRawDiffKey.isEmpty && diffs.isNotEmpty) {
+              selectedRawDiffKey = diffs.keys.first.toString();
+            }
 
-          final diffObj = selectedRawDiffKey.isEmpty
-              ? <String, dynamic>{}
-              : (diffs[selectedRawDiffKey] as Map<String, dynamic>? ?? {});
+            final Map<String, dynamic> diffObj = selectedRawDiffKey.isEmpty
+                ? <String, dynamic>{}
+                : (diffs[selectedRawDiffKey] as Map<String, dynamic>? ?? {});
 
-
-            final handsObj =
+            final Map<String, dynamic> handsObj =
                 diffObj['hands'] as Map<String, dynamic>? ?? {};
 
-            final availableHands = handsObj.keys.cast<String>().toList()..sort();
+            final List<String> availableHands =
+                handsObj.keys.cast<String>().toList()
+                  ..sort();
 
             if (availableHands.isNotEmpty &&
                 !availableHands.contains(_selectedHands)) {
               _selectedHands = availableHands.first;
             }
 
-            final selectedHandObj =
+            final Map<String, dynamic> selectedHandObj =
                 handsObj[_selectedHands] as Map<String, dynamic>? ?? {};
-            final currentStoragePath =
-              (selectedHandObj['storagePath'] as String?) ?? '';
-              _currentStoragePath = currentStoragePath;
-            return SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  Container(
-                    width: double.infinity,
-                    height: MediaQuery.of(context).size.height * 0.45,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFD54F),
-                      borderRadius: BorderRadius.circular(6),
+
+            final String currentStoragePath =
+                (selectedHandObj['storagePath'] as String?) ?? '';
+
+            _currentStoragePath = currentStoragePath;
+
+            return SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      height: MediaQuery.of(context).size.height * 0.45,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFD54F),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Icon(
+                        Icons.music_note,
+                        size: 128,
+                        color: Colors.black,
+                      ),
                     ),
-                    child: const Icon(
-                      Icons.music_note,
-                      size: 128,
-                      color: Colors.black,
+                    const SizedBox(height: 40),
+                    Text(
+                      widget.title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  Text(
-                    widget.title,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
+                    const SizedBox(height: 8),
+                    Text(
+                      widget.artist,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 18,
+                      ),
                     ),
-                  ),
+                    const SizedBox(height: 40),
 
-                  const SizedBox(height: 8),
-
-                  Text(
-                    widget.artist,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 18,
-                    ),
-                  ),
-
-                  const SizedBox(height: 40),
-
-                  if (availableDiffs.length > 1)
-                    Row(
-                      children: [
-                        const Text('Difficulty:',
-                            style: TextStyle(color: Colors.white)),
-                        const SizedBox(width: 12),
-                        DropdownButton<String>(
-                          value: _selectedDifficulty,
-                          dropdownColor: const Color(0xFF2A2A2A),
-                          items: availableDiffs
-                              .map((d) => DropdownMenuItem(
+                    if (availableDiffs.length > 1)
+                      Row(
+                        children: [
+                          const Text(
+                            'Difficulty:',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          const SizedBox(width: 12),
+                          DropdownButton<String>(
+                            value: _selectedDifficulty,
+                            dropdownColor: const Color(0xFF2A2A2A),
+                            items: availableDiffs
+                                .map(
+                                  (d) => DropdownMenuItem<String>(
                                     value: d,
-                                    child: Text(d,
-                                        style:
-                                            const TextStyle(color: Colors.white)),
-                                  ))
-                              .toList(),
-                          onChanged: (v) {
-                            if (v == null) return;
-                            setState(() {
-                            _selectedDifficulty = v;
-                          });
-                          },
-                        ),
-                      ],
-                    ),
+                                    child: Text(
+                                      d,
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v == null) return;
+                              setState(() => _selectedDifficulty = v);
+                            },
+                          ),
+                        ],
+                      ),
 
-                  const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                  if (availableHands.length > 1)
-                    Row(
-                      children: [
-                        const Text('Hands:',
-                            style: TextStyle(color: Colors.white)),
-                        const SizedBox(width: 12),
-                        DropdownButton<String>(
-                          value: _selectedHands,
-                          dropdownColor: const Color(0xFF2A2A2A),
-                          items: availableHands
-                              .map((h) => DropdownMenuItem(
+                    if (availableHands.length > 1)
+                      Row(
+                        children: [
+                          const Text(
+                            'Hands:',
+                            style: TextStyle(color: Colors.white),
+                          ),
+                          const SizedBox(width: 12),
+                          DropdownButton<String>(
+                            value: _selectedHands,
+                            dropdownColor: const Color(0xFF2A2A2A),
+                            items: availableHands
+                                .map(
+                                  (h) => DropdownMenuItem<String>(
                                     value: h,
-                                    child: Text(h,
-                                        style:
-                                            const TextStyle(color: Colors.white)),
-                                  ))
-                              .toList(),
-                          onChanged: (v) {
-                            if (v == null) return;
-                            setState(() => _selectedHands = v);
-                          },
-                        ),
-                      ],
+                                    child: Text(
+                                      h,
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (v) {
+                              if (v == null) return;
+                              setState(() => _selectedHands = v);
+                            },
+                          ),
+                        ],
+                      ),
+
+                    const SizedBox(height: 30),
+
+                    MyButton(
+                      title: isPlaying ? "Stop Song" : "Learn Song",
+                      color: isPlaying ? Colors.redAccent : Colors.blueAccent,
+                      onPressed: currentStoragePath.isEmpty
+                          ? null
+                          : () => sendPlaybackCommand(!isPlaying, currentStoragePath),
                     ),
-
-                  const SizedBox(height: 30),
-
-                  MyButton(
-                  title: isPlaying ? "Stop Song" : "Learn Song",
-                  color: isPlaying ? Colors.redAccent : Colors.blueAccent,
-                  onPressed: currentStoragePath.isEmpty
-                      ? null
-                      : () => sendPlaybackCommand(!isPlaying, currentStoragePath),
+                  ],
                 ),
-                                ],
               ),
             );
           },

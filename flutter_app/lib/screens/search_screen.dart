@@ -34,7 +34,7 @@ class _SearchScreenState extends State<SearchScreen> {
     'EASY',
     'SLOW BEGINNER',
     'BEGINNER',
-    'INTERMEDIATE',
+    'MEDIUM',
     'HARD',
     'ADVANCED',
   ];
@@ -85,7 +85,7 @@ class _SearchScreenState extends State<SearchScreen> {
     if (u.contains('BEGINNER')) return 'BEGINNER';
     if (u.contains('EASY')) return 'EASY';
     if (u.contains('INTERMEDIATE')) return 'INTERMEDIATE';
-    if (u.contains('MEDIUM')) return 'INTERMEDIATE'; // unify
+    if (u.contains('MEDIUM')) return 'MEDIUM'; // unify
     if (u.contains('HARD')) return 'HARD';
     if (u.contains('ADVANCED')) return 'ADVANCED';
 
