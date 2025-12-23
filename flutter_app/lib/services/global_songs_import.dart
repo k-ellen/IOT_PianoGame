@@ -38,7 +38,7 @@ Future<void> importGlobalSongsToFirestore() async {
       ); //The song's call name, without .midi
 
       final existing = await firestore
-          .collection('songs')
+          .collection('songsNEW.midi')
           .where('storagePath', isEqualTo: storagePath)
           .limit(1)
           .get();
@@ -46,7 +46,7 @@ Future<void> importGlobalSongsToFirestore() async {
       if (existing.docs.isNotEmpty)
         continue; //If you have already imported this song it will not be duplicated
 
-      await firestore.collection('songs').add({
+      await firestore.collection('songsNEW.midi').add({
         //A new document has been added to the songs collection
         'name': displayName,
         'artist': artistName,

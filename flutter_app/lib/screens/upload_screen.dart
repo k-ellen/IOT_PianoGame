@@ -91,7 +91,7 @@ class _UploadScreenState extends State<UploadScreen> {
 
     print("Checking if song exists in Firestore…");
     final firestoreQuery = await firestore
-        .collection("songs")
+        .collection("songsNEW.midi")
         .where("storagePath", isEqualTo: storagePath)
         .limit(1)
         .get();
@@ -101,7 +101,7 @@ class _UploadScreenState extends State<UploadScreen> {
     if (!firestoreExists) {
       print("Adding document to Firestore…");
 
-      await firestore.collection('songs').add({
+      await firestore.collection('songsNEW.midi').add({
         'name': displayName, // e.g. "MySong"
         'artist': 'Unknown', // can later be extracted
         'genre': 'User Upload', // or categorize later
