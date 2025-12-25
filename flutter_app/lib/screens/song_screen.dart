@@ -42,10 +42,13 @@ class _SongScreenState extends State<SongScreen> {
   late String _selectedDifficulty;
   _HandsChoice _handsChoice = _HandsChoice.oneHand;
 
+  // Keep latest Firestore difficulties so we can recompute storage path on-demand.
+  Map<String, dynamic> _lastDiffs = {};
+
   String _currentStoragePath = '';
 
   bool _metronomeOn = false;
-  double _chosenSpeed = 1.0;
+  double _chosenSpeed = 1.0; // 0.1..2.0
 
   _PlayMode _mode = _PlayMode.memorize;
 
@@ -145,6 +148,7 @@ class _SongScreenState extends State<SongScreen> {
     });
   }
 
+  // ---------- dialogs ----------
   Future<void> _showExitDialog() async {
     final bool? shouldLeave = await showDialog<bool>(
       context: context,
@@ -187,6 +191,41 @@ class _SongScreenState extends State<SongScreen> {
     }
   }
 
+  Future<bool> _showStopBeforeChangeDialog() async {
+    final bool? stop = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text("Stop playing?"),
+        content: const Text(
+          "The song is currently playing.\nDo you want to stop it before changing settings?",
+        ),
+        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        titleTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 25,
+          fontWeight: FontWeight.bold,
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Stop & Change"),
+          ),
+        ],
+      ),
+    );
+
+    return stop == true;
+  }
+
+  // ---------- navigation ----------
   Future<void> _handleNavLeave(int index) async {
     if (isPlaying) {
       _pendingNavIndex = index;
@@ -208,6 +247,7 @@ class _SongScreenState extends State<SongScreen> {
     }
   }
 
+  // ---------- speed dialog ----------
   Future<bool> _showChooseSpeedDialog() async {
     double tempSpeed = _chosenSpeed.clamp(0.1, 2.0);
 
@@ -262,17 +302,139 @@ class _SongScreenState extends State<SongScreen> {
     return ok == true;
   }
 
+  // ---------- recompute storagePath based on current selections ----------
+  void _recomputeStoragePath() {
+    final Map<String, dynamic> diffs = _lastDiffs;
+    if (diffs.isEmpty) {
+      _currentStoragePath = '';
+      return;
+    }
+
+    final List<String> candidateRawDiffKeys = <String>[];
+    for (final entry in diffs.entries) {
+      final String rawKey = entry.key.toString();
+      final String label = _cleanDifficulty(rawKey);
+
+      if (_selectedDifficulty == 'UNKNOWN') {
+        candidateRawDiffKeys.add(rawKey);
+      } else {
+        if (_isUnknownValue(label)) continue;
+        if (label == _selectedDifficulty) candidateRawDiffKeys.add(rawKey);
+      }
+    }
+
+    String bestPath = '';
+
+    for (final String rawDiffKey in candidateRawDiffKeys) {
+      final Map<String, dynamic> diffObj =
+          diffs[rawDiffKey] as Map<String, dynamic>? ?? {};
+      final Map<String, dynamic> handsObj =
+          diffObj['hands'] as Map<String, dynamic>? ?? {};
+
+      for (final entry in handsObj.entries) {
+        final String rawHandKey = entry.key.toString();
+        final String handLabel = _cleanHandsLabel(rawHandKey);
+        if (_isUnknownValue(handLabel)) continue;
+
+        final Map<String, dynamic> handObj =
+            entry.value as Map<String, dynamic>? ?? {};
+        final String p = (handObj['storagePath'] as String?) ?? '';
+        if (p.isEmpty) continue;
+
+        final bool isTwo = (handLabel == 'BOTH');
+        final bool wantTwo = (_handsChoice == _HandsChoice.twoHands);
+
+        if (wantTwo && isTwo) {
+          bestPath = p;
+          break;
+        }
+
+        if (!wantTwo && !isTwo) {
+          bestPath = p;
+          break;
+        }
+      }
+
+      if (bestPath.isNotEmpty) break;
+    }
+
+    _currentStoragePath = bestPath;
+  }
+
+  // ---------- change settings while playing ----------
+  Future<void> _attemptChangeWhilePlaying(void Function() applyChange) async {
+    if (!isPlaying) {
+      setState(() {
+        applyChange();
+        _recomputeStoragePath();
+      });
+      return;
+    }
+
+    final bool ok = await _showStopBeforeChangeDialog();
+    if (!ok) return;
+
+    await sendPlaybackCommand(false, _currentStoragePath);
+
+    if (!mounted) return;
+
+    setState(() {
+      applyChange();
+      _recomputeStoragePath();
+    });
+  }
+
+  // ---------- memorize/follow ----------
   Future<void> _onSelectFollow() async {
+    // If song is playing: show stop dialog first, stop song, set Follow + speed=1,
+    // show short message, and RETURN (user can tap follow again to choose speed).
+    if (isPlaying) {
+      final bool stopOk = await _showStopBeforeChangeDialog();
+      if (!stopOk) return;
+
+      await sendPlaybackCommand(false, _currentStoragePath);
+      if (!mounted) return;
+
+      setState(() {
+        _mode = _PlayMode.follow;
+        _chosenSpeed = 1.0;
+      });
+
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text("Song stopped. Tap Follow Song again to choose speed"),
+            duration: Duration(seconds: 4),
+          ),
+        );
+
+      return;
+    }
+
+    // Not playing: choose speed now.
     final bool ok = await _showChooseSpeedDialog();
     if (!ok) return;
     if (!mounted) return;
+
     setState(() => _mode = _PlayMode.follow);
   }
 
-  void _onSelectMemorize() => setState(() => _mode = _PlayMode.memorize);
+  Future<void> _onSelectMemorize() async {
+    if (isPlaying) {
+      final bool stopOk = await _showStopBeforeChangeDialog();
+      if (!stopOk) return;
+      await sendPlaybackCommand(false, _currentStoragePath);
+      if (!mounted) return;
+    }
+    setState(() => _mode = _PlayMode.memorize);
+  }
 
+  // ---------- play/stop ----------
   Future<void> _onPlayStopPressed() async {
+    _recomputeStoragePath();
     final String path = _currentStoragePath;
+
     if (path.isEmpty) return;
 
     if (isPlaying) {
@@ -332,18 +494,32 @@ class _SongScreenState extends State<SongScreen> {
             final Map<String, dynamic> diffs =
                 data['difficulties'] as Map<String, dynamic>? ?? {};
 
-            // group raw difficulties by cleaned label
+            _lastDiffs = diffs;
+
+            // Build map: label -> raw keys
             final Map<String, List<String>> rawKeysByDiffLabel = {};
+            final List<String> unknownRawDiffKeys = <String>[];
+
             for (final entry in diffs.entries) {
               final String rawKey = entry.key.toString();
               final String label = _cleanDifficulty(rawKey);
-              if (_isUnknownValue(label)) continue;
-              rawKeysByDiffLabel.putIfAbsent(label, () => <String>[]);
-              rawKeysByDiffLabel[label]!.add(rawKey);
+
+              if (_isUnknownValue(label)) {
+                unknownRawDiffKeys.add(rawKey);
+              } else {
+                rawKeysByDiffLabel.putIfAbsent(label, () => <String>[]);
+                rawKeysByDiffLabel[label]!.add(rawKey);
+              }
             }
 
-            final List<String> diffLabels =
-                rawKeysByDiffLabel.keys.toList()..sort();
+            final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()..sort();
+
+            // If no known labels, but we do have UNKNOWN entries -> allow UNKNOWN
+            if (diffLabels.isEmpty && unknownRawDiffKeys.isNotEmpty) {
+              rawKeysByDiffLabel['UNKNOWN'] = unknownRawDiffKeys;
+              diffLabels.add('UNKNOWN');
+            }
+
             final bool showDifficultySelector = diffLabels.length > 1;
 
             if (diffLabels.isNotEmpty) {
@@ -351,6 +527,7 @@ class _SongScreenState extends State<SongScreen> {
                 _selectedDifficulty = diffLabels.first;
               }
             } else {
+              // No diffs at all
               _selectedDifficulty = 'UNKNOWN';
             }
 
@@ -359,10 +536,6 @@ class _SongScreenState extends State<SongScreen> {
 
             bool hasOneHand = false;
             bool hasTwoHands = false;
-
-            String pathOneHandRight = '';
-            String pathOneHandLeft = '';
-            String pathTwoHands = '';
 
             _HandsChoice? initialChoiceFound;
             final String initialHandsClean = _cleanHandsLabel(widget.initialHands);
@@ -378,19 +551,10 @@ class _SongScreenState extends State<SongScreen> {
                 final String handLabel = _cleanHandsLabel(rawHandKey);
                 if (_isUnknownValue(handLabel)) continue;
 
-                final Map<String, dynamic> handObj =
-                    entry.value as Map<String, dynamic>? ?? {};
-                final String p = (handObj['storagePath'] as String?) ?? '';
-
                 if (handLabel == 'BOTH') {
                   hasTwoHands = true;
-                  if (pathTwoHands.isEmpty && p.isNotEmpty) pathTwoHands = p;
-                } else if (handLabel == 'RIGHT') {
+                } else if (handLabel == 'LEFT' || handLabel == 'RIGHT') {
                   hasOneHand = true;
-                  if (pathOneHandRight.isEmpty && p.isNotEmpty) pathOneHandRight = p;
-                } else if (handLabel == 'LEFT') {
-                  hasOneHand = true;
-                  if (pathOneHandLeft.isEmpty && p.isNotEmpty) pathOneHandLeft = p;
                 }
 
                 if (!_didInitHandsChoiceFromInitial) {
@@ -429,45 +593,29 @@ class _SongScreenState extends State<SongScreen> {
               if (hasOneHand && !hasTwoHands) _handsChoice = _HandsChoice.oneHand;
             }
 
-            String resolvedPath = '';
-            if (_handsChoice == _HandsChoice.twoHands) {
-              resolvedPath = pathTwoHands;
-            } else {
-              resolvedPath = pathOneHandRight.isNotEmpty
-                  ? pathOneHandRight
-                  : pathOneHandLeft;
-            }
-            _currentStoragePath = resolvedPath;
-
+            _recomputeStoragePath();
             final bool canPlay = _currentStoragePath.isNotEmpty;
 
             return LayoutBuilder(
               builder: (context, constraints) {
-                // viewport height (for deciding cover size)
                 final double viewportH = constraints.maxHeight;
 
-                // estimate below-cover (good enough)
                 final double estimatedBelowCover =
                     16 + // spacing
                     70 + // title+artist
-                    16 +
+                    32 + // extra space before block
                     (showDifficultySelector || showHandsSelector ? 78 : 0) +
                     12 +
-                    56 + // metronome row
+                    56 + // metronome
                     14 +
                     58 + // memorize/follow
                     14 +
-                    56 + // play button
-                    12; // bottom padding
+                    56 + // play
+                    12;
 
-                const double bigCover = 420;
-                const double smallCover = 280;
+                final double screenHeight = MediaQuery.of(context).size.height;
 
-                final bool wouldOverflowWithBig =
-                    (bigCover + estimatedBelowCover) > viewportH;
-
-                final double coverHeight =
-                    wouldOverflowWithBig ? smallCover : bigCover;
+                final double coverHeight = screenHeight * 0.35;
 
                 return SingleChildScrollView(
                   padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
@@ -481,7 +629,8 @@ class _SongScreenState extends State<SongScreen> {
                           borderRadius: BorderRadius.circular(10),
                         ),
                         child: const Center(
-                          child: Icon(Icons.music_note, size: 112, color: Colors.black),
+                          child:
+                              Icon(Icons.music_note, size: 112, color: Colors.black),
                         ),
                       ),
                       const SizedBox(height: 16),
@@ -498,7 +647,7 @@ class _SongScreenState extends State<SongScreen> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 8),
                             Text(
                               widget.artist,
                               textAlign: TextAlign.center,
@@ -508,7 +657,7 @@ class _SongScreenState extends State<SongScreen> {
                         ),
                       ),
 
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 38),
 
                       if (showDifficultySelector || showHandsSelector) ...[
                         Row(
@@ -521,10 +670,12 @@ class _SongScreenState extends State<SongScreen> {
                                   child: _DarkDropdown(
                                     value: _selectedDifficulty,
                                     items: diffLabels,
-                                    onChanged: (v) => setState(() {
-                                      _selectedDifficulty = v;
-                                      _didInitHandsChoiceFromInitial = false;
-                                    }),
+                                    onChanged: (v) {
+                                      _attemptChangeWhilePlaying(() {
+                                        _selectedDifficulty = v;
+                                        _didInitHandsChoiceFromInitial = false;
+                                      });
+                                    },
                                   ),
                                 ),
                               ),
@@ -536,7 +687,11 @@ class _SongScreenState extends State<SongScreen> {
                                   label: "Hands:",
                                   child: _HandsOneVsTwoPicker(
                                     value: _handsChoice,
-                                    onChanged: (v) => setState(() => _handsChoice = v),
+                                    onChanged: (v) {
+                                      _attemptChangeWhilePlaying(() {
+                                        _handsChoice = v;
+                                      });
+                                    },
                                   ),
                                 ),
                               ),
@@ -556,7 +711,11 @@ class _SongScreenState extends State<SongScreen> {
                           ),
                           Switch(
                             value: _metronomeOn,
-                            onChanged: (v) => setState(() => _metronomeOn = v),
+                            onChanged: (v) {
+                              _attemptChangeWhilePlaying(() {
+                                _metronomeOn = v;
+                              });
+                            },
                             activeColor: Colors.blueAccent,
                           ),
                         ],
@@ -574,7 +733,6 @@ class _SongScreenState extends State<SongScreen> {
 
                       const SizedBox(height: 14),
 
-                      // ALWAYS visible
                       ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: isPlaying
@@ -589,7 +747,10 @@ class _SongScreenState extends State<SongScreen> {
                         onPressed: canPlay ? _onPlayStopPressed : null,
                         child: Text(
                           isPlaying ? "Stop Song" : "Play Song",
-                          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                          style: const TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -609,6 +770,7 @@ class _SongScreenState extends State<SongScreen> {
   }
 }
 
+// ---------- small widgets ----------
 class _LabeledBox extends StatelessWidget {
   final String label;
   final Widget child;
@@ -776,7 +938,7 @@ class _SegmentedAction extends StatelessWidget {
   final String leftText;
   final String rightText;
   final int selected; // 0 left, 1 right
-  final VoidCallback onLeft;
+  final Future<void> Function() onLeft;
   final Future<void> Function() onRight;
 
   const _SegmentedAction({
@@ -800,7 +962,7 @@ class _SegmentedAction extends StatelessWidget {
           Expanded(
             child: InkWell(
               borderRadius: BorderRadius.circular(14),
-              onTap: onLeft,
+              onTap: () => onLeft(),
               child: _segBtn(text: leftText, isSelected: selected == 0),
             ),
           ),
