@@ -11,6 +11,11 @@
 #include "FirebaseControl.h"
 #include "secrets.h"
 
+// --- IDLE TIMER VARS ---
+unsigned long lastActivityTime = 0;
+const unsigned long IDLE_TIMEOUT_MS = 5000; // 5 seconds (Adjust as you like)
+bool isIdleMode = false;
+
 // =======================
 // MIDI SERIAL (ESP32)
 // =======================
@@ -26,24 +31,63 @@ void checkMidi() {
 // REAL-TIME MIDI CALLBACKS
 // =======================
 
+// static void handleNoteOn(byte channel, byte note, byte velocity) {
+//   if (note < FIRST_KEY || note > LAST_KEY) return;
+
+//   if (currentMode == MODE_LEARN) {
+//     Player_onNoteOn(note);
+//   } else if (currentMode == MODE_FREE) {
+//     // Free play: LED + Synth
+//     Led_noteOn(note, 0x00B400);          // Green
+//     Audio_noteOn(note, velocity);
+//   }
+// }
 static void handleNoteOn(byte channel, byte note, byte velocity) {
+  // 1. Bounds Check (Your logic)
   if (note < FIRST_KEY || note > LAST_KEY) return;
 
+  // 2. IDLE RESET (The new "Wake Up" logic)
+  // If we were in rainbow mode, clear it immediately
+  if (isIdleMode) {
+    Led_clear();       
+    isIdleMode = false; 
+  }
+  // Reset the "Sleep Timer"
+  lastActivityTime = millis();
+
+  // 3. YOUR LOGIC (Game vs Free Play)
   if (currentMode == MODE_LEARN) {
-    Player_onNoteOn(note);
-  } else if (currentMode == MODE_FREE) {
-    // Free play: LED + Synth
-    Led_noteOn(note, 0x00B400);          // Green
+    // Forward to Game Engine
+    Player_onNoteOn(note, velocity); 
+  } 
+  else if (currentMode == MODE_FREE) {
+    // Free play: Green LED + Synth
+    Led_noteOn(note, 0x00B400); // User requested Green
     Audio_noteOn(note, velocity);
   }
 }
 
+// static void handleNoteOff(byte channel, byte note, byte velocity) {
+//   if (note < FIRST_KEY || note > LAST_KEY) return;
+
+//   if (currentMode == MODE_LEARN) {
+//     Player_onNoteOff(note);
+//   } else if (currentMode == MODE_FREE) {
+//     Led_noteOff(note);
+//     Audio_noteOff(note);
+//   }
+// }
 static void handleNoteOff(byte channel, byte note, byte velocity) {
   if (note < FIRST_KEY || note > LAST_KEY) return;
 
+  // 1. Reset Sleep Timer on release too
+  lastActivityTime = millis();
+
+  // 2. Standard Logic
   if (currentMode == MODE_LEARN) {
-    Player_onNoteOff(note);
-  } else if (currentMode == MODE_FREE) {
+    Player_onNoteOff(note, velocity);
+  } 
+  else if (currentMode == MODE_FREE) {
     Led_noteOff(note);
     Audio_noteOff(note);
   }
@@ -120,9 +164,14 @@ void loop() {
 
     Serial.print("▶️ Starting song playback: ");
     Serial.println(localPath);
+    Led_clear();        // Clear any rainbow/notes
+    isIdleMode = false; // Stop animation during song
 
     Player_playSong(localPath);
 
+    // Song Finished:
+    Led_clear();
+    lastActivityTime = millis();
     Serial.println("🎹 Returned to FREE PLAY");
   }
 }

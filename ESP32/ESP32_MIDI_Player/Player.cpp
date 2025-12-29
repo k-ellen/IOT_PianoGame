@@ -6,6 +6,17 @@
 #include "MidiParser.h"
 #include "FirebaseControl.h"
 
+
+// Segment learning helpers
+static bool g_ignoreUserInput = false;
+static bool g_segmentHadMistake = false;
+// static uint64_t chordTicks[4096];
+
+// Build segments (each segment = SEGMENT_CHORDS chord-steps)
+struct Segment { uint64_t startTick; uint64_t endTick; };
+// Limit segment array to save memory, or use dynamic if needed
+static Segment segments[MAX_SEGMENTS]; 
+
 // =======================
 // INTERACTIVE STATE
 // =======================
@@ -29,6 +40,7 @@ static uint32_t TRACK_COLORS[] = { 0x0000FF, 0xFF00FF };
 
 void Player_onNoteOn(uint8_t note) {
   if (note < FIRST_KEY || note > LAST_KEY) return;
+  if (g_ignoreUserInput) return;
   
   if (!isLearningMode) {
     // --- FREE PLAY ---
@@ -46,7 +58,7 @@ void Player_onNoteOn(uint8_t note) {
        // Since the "Wait Logic" already painted it the track color, we do nothing here visually.
     } else {
        // WRONG NOTE
-       Serial.println(note);
+       g_segmentHadMistake = true;
        setLedBuffer(note, 0xFF0000); // Red
     }
   }
@@ -148,7 +160,7 @@ static void playAudioMode(MidiParser &midi) {
 
       // Simple wait
       while (!stopRequested && (int64_t)(startUS + globalTimeUS - micros()) > 0) {
-         delayMicroseconds(500);
+         delay(1);
       }
     }
 
@@ -228,7 +240,7 @@ static void playInteractiveMode(MidiParser &midi) {
         checkMidi();
         verifyNoteHolds(stepDurationMs); // Check holds even during empty spaces
         FirebaseControl_checkStop();
-        delayMicroseconds(500);
+        delay(1);
       }
     }
 
@@ -241,6 +253,7 @@ static void playInteractiveMode(MidiParser &midi) {
       // Visuals: Blue/Purple to indicate "Hit Me!"
       uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS]; 
       Led_noteOn(ev.note, color);
+        Audio_noteOn(ev.note, ev.velocity ? ev.velocity : 100);
     }
     else if (ev.type == MIDI_NOTE_OFF) {
       notesToPlay[ev.note] = false;
@@ -261,35 +274,291 @@ static void playInteractiveMode(MidiParser &midi) {
 // =======================
 
 void Player_playSong(const String &path) {
-  MidiParser midi;
+  int segmentCount = 0;
+  Serial.println("📂 Analyzing song structure...");
 
-  // // --- PASS 1: AUDIO LISTEN ---
-  // if (midi.open(path)) {
-  //   currentMode = MODE_SONG_AUDIO;
-  //   Serial.println("▶ Playing Audio Demo...");
-  //   playAudioMode(midi);
-  //   midi.close();
-  // }
+  int primaryTrack = 0;
 
-  if (stopRequested) {
-    Audio_allNotesOff();
-    Led_clear();
-    currentMode = MODE_FREE;
-    return;
+  // --- PASS 1: FIND PRIMARY TRACK (MELODY) ---
+  // We assume the track with the most notes is the melody/learner track.
+  {
+    MidiParser scan;
+    if (!scan.open(path)) {
+      Serial.println("❌ Cannot open MIDI");
+      return;
+    }
+
+    int trackNoteCounts[16] = {0};
+    MidiEvent ev;
+    uint64_t absTicks = 0;
+
+    while (scan.nextEvent(ev, absTicks)) {
+      if ((absTicks % 100) == 0) delay(0); // Watchdog feed
+      if (ev.type == MIDI_NOTE_ON && ev.velocity > 0) {
+        if (ev.track < 16) trackNoteCounts[ev.track]++;
+      }
+      if (ev.type == MIDI_END) break;
+    }
+    scan.close();
+
+    // Find winner
+    int maxNotes = -1;
+    for(int i=0; i<16; i++) {
+      if (trackNoteCounts[i] > maxNotes) {
+        maxNotes = trackNoteCounts[i];
+        primaryTrack = i;
+      }
+    }
+    Serial.printf("🎹 Primary Track detected: %d (has %d notes)\n", primaryTrack, maxNotes);
+    
+    if (maxNotes == 0) {
+        Serial.println("⚠️ No notes found in song.");
+        return;
+    }
   }
 
-  // --- PASS 2: INTERACTIVE PRACTICE ---
-  if (midi.open(path)) {
+  // --- PASS 2: GENERATE SEGMENTS BASED ON PRIMARY TRACK ---
+  {
+    MidiParser scan;
+    scan.open(path);
+
+    MidiEvent ev;
+    uint64_t absTicks = 0;
+    
+    uint64_t lastPrimaryTick = (uint64_t)(-1);
+    int stepCounter = 0;
+    
+    // Start the first segment at 0
+    segments[0].startTick = 0;
+    
+    while (scan.nextEvent(ev, absTicks)) {
+      if ((absTicks % 100) == 0) delay(0); // Watchdog feed
+
+      // Only count rhythm/steps from the Primary Track
+      if (ev.type == MIDI_NOTE_ON && ev.velocity > 0 && ev.track == primaryTrack) {
+        
+        // Debounce simultaneous notes (chords) on the primary track
+        if (absTicks != lastPrimaryTick) {
+            lastPrimaryTick = absTicks;
+            stepCounter++;
+
+            // If we have collected enough melody steps, CUT HERE.
+            // This timestamp becomes the End of current segment and Start of next.
+            if (stepCounter >= SEGMENT_CHORDS) {
+                segments[segmentCount].endTick = absTicks;
+                
+                segmentCount++;
+                if (segmentCount >= MAX_SEGMENTS) break;
+
+                // Start next segment
+                segments[segmentCount].startTick = absTicks;
+                stepCounter = 0; 
+            }
+        }
+      }
+      if (ev.type == MIDI_END) break;
+    }
+    
+    // Close the final segment to the end of the song
+    if (segmentCount < MAX_SEGMENTS) {
+        segments[segmentCount].endTick = (uint64_t)(-1); // To end of file
+        segmentCount++;
+    }
+    
+    scan.close();
+  }
+
+  Serial.printf("✅ Segmentation complete: %d segments (synced to Track %d).\n", segmentCount, primaryTrack);
+
+
+  // --- HELPER LAMBDAS (Unchanged Logic) ---
+
+  auto resetLearningState = []() {
+    for (int i = 0; i < 128; i++) {
+      notesToPlay[i] = false;
+      notesPressed[i] = false;
+      notesSatisfied[i] = false;
+    }
+    Led_clear();
+    Audio_allNotesOff();
+  };
+
+  // --- PLAY DEMO (Listen Only) ---
+  auto playSegmentDemo = [&](uint64_t segStart, uint64_t segEnd) {
+    MidiParser midi;
+    if (!midi.open(path)) return;
+
+    resetLearningState();
+    currentMode = MODE_SONG_AUDIO;
+    g_ignoreUserInput = true;     
+    isLearningMode = false;
+
+    uint32_t tempoUS = 500000;
+    uint16_t division = midi.getDivision();
+    MidiEvent ev;
+    uint64_t absTicks = 0;
+
+    // Fast Forward
+    while (midi.nextEvent(ev, absTicks) && absTicks < segStart) {
+      if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
+    }
+
+    uint64_t globalTicks = segStart;
+    uint64_t globalTimeUS = 0;
+    uint64_t startUS = micros();
+    bool haveEv = (absTicks >= segStart && ev.type != MIDI_NONE);
+
+    while (!stopRequested) {
+      if (!haveEv && !midi.nextEvent(ev, absTicks)) break;
+      haveEv = false;
+
+      if (ev.type == MIDI_END) break;
+      if (absTicks < segStart) continue;
+      // Use strictly >= to stop exactly where the next segment begins
+      if (segEnd != (uint64_t)(-1) && absTicks >= segEnd) break;
+
+      uint64_t deltaTicks = absTicks - globalTicks;
+      if (deltaTicks > 0) {
+        uint64_t stepDurationUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
+        globalTimeUS += stepDurationUS;
+        globalTicks = absTicks;
+
+        while (!stopRequested && (int64_t)(startUS + globalTimeUS - micros()) > 0) {
+          FirebaseControl_checkStop();
+          delay(1);
+        }
+      }
+
+      if (ev.type == MIDI_NOTE_ON) {
+        uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
+        Led_noteOn(ev.note, color);
+        Audio_noteOn(ev.note, ev.velocity);
+      } else if (ev.type == MIDI_NOTE_OFF) {
+        Led_noteOff(ev.note);
+        Audio_noteOff(ev.note);
+      } else if (ev.type == MIDI_TEMPO) {
+        tempoUS = ev.tempoUS;
+      }
+    }
+    Audio_allNotesOff();
+    Led_clear();
+    midi.close();
+  };
+
+  // --- PRACTICE (Interactive) ---
+  auto practiceSegment = [&](uint64_t segStart, uint64_t segEnd) {
+    MidiParser midi;
+    if (!midi.open(path)) return;
+
+    resetLearningState();
     currentMode = MODE_LEARN;
-    Serial.println("▶ Starting Interactive Practice...");
+    g_ignoreUserInput = false;
     isLearningMode = true;
-        playInteractiveMode(midi);
+    g_segmentHadMistake = false; 
+
+    uint32_t tempoUS = 500000;
+    uint16_t division = midi.getDivision();
+    MidiEvent ev;
+    uint64_t absTicks = 0;
+
+    // Fast Forward
+    while (midi.nextEvent(ev, absTicks) && absTicks < segStart) {
+      if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
+    }
+
+    uint64_t globalTicks = segStart;
+    uint64_t globalTimeUS = 0;
+    uint64_t startUS = micros();
+    bool haveEv = (absTicks >= segStart && ev.type != MIDI_NONE);
+
+    while (!stopRequested) {
+      if (!haveEv && !midi.nextEvent(ev, absTicks)) break;
+      haveEv = false;
+
+      if (ev.type == MIDI_END) break;
+      if (absTicks < segStart) continue;
+      if (segEnd != (uint64_t)(-1) && absTicks >= segEnd) break;
+
+      uint64_t deltaTicks = absTicks - globalTicks;
+      if (deltaTicks > 0) {
+        uint64_t stepDurationUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
+        unsigned long stepDurationMs = (unsigned long)(stepDurationUS / 1000);
+
+        // === WAIT LOGIC ===
+        if (areAnyNotesUnsatisfied()) {
+          uint64_t waitStart = micros();
+          while (!stopRequested && areAnyNotesUnsatisfied()) {
+            checkMidi();
+            verifyNoteHolds(stepDurationMs);
+            FirebaseControl_checkStop();
+            delay(5); 
+          }
+          startUS += (micros() - waitStart); 
+          if (!stopRequested) delay(50);
+        }
+
+        globalTimeUS += stepDurationUS;
+        globalTicks = absTicks;
+
+        while (!stopRequested && (int64_t)(startUS + globalTimeUS - micros()) > 0) {
+          checkMidi();
+          verifyNoteHolds(stepDurationMs);
+          FirebaseControl_checkStop();
+          delay(1);
+        }
+      }
+
+      if (ev.type == MIDI_NOTE_ON) {
+        notesToPlay[ev.note] = true;
+        notesPressed[ev.note] = false;
+        notesSatisfied[ev.note] = false;
+        
+        uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
+        Led_noteOn(ev.note, color);
+      } else if (ev.type == MIDI_NOTE_OFF) {
+        notesToPlay[ev.note] = false;
+        if (notesSatisfied[ev.note]) Led_noteOff(ev.note);
+        notesSatisfied[ev.note] = false;
+      } else if (ev.type == MIDI_TEMPO) {
+        tempoUS = ev.tempoUS;
+      }
+    }
+
+    Audio_allNotesOff();
+    Led_clear();
     isLearningMode = false;
     midi.close();
+  };
+
+  // --- MAIN LOOP ---
+  stopRequested = false;
+  
+  for (int s = 0; s < segmentCount && !stopRequested; s++) {
+    Serial.printf("▶ Learning Segment %d/%d\n", s + 1, segmentCount);
+
+    // 1. Play Demo
+    playSegmentDemo(segments[s].startTick, segments[s].endTick);
+    if (stopRequested) break;
+
+    // 2. Loop Practice
+    while (!stopRequested) {
+      practiceSegment(segments[s].startTick, segments[s].endTick);
+      if (stopRequested) break;
+
+      if (!g_segmentHadMistake) {
+        Serial.println("✨ Segment Cleared! Next...");
+        delay(500); 
+        break; 
+      }
+
+      Serial.println("⚠️ Mistakes made. Replaying Demo...");
+      delay(500);
+      playSegmentDemo(segments[s].startTick, segments[s].endTick);
+    }
   }
 
   Audio_allNotesOff();
   Led_clear();
   currentMode = MODE_FREE;
-  Serial.println("⏸ Song finished. Back to Free Play.");
+  Serial.println("🏁 Song finished!");
 }

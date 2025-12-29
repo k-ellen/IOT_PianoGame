@@ -53,3 +53,26 @@ void setLedBuffer(int note, uint32_t color) {
   }
   pixels.show();
 }
+
+void Led_animateRainbow() {
+  static uint16_t firstPixelHue = 0;
+  static unsigned long lastFrame = 0;
+
+  // 1. Limit Framerate (e.g., 20ms = 50 FPS) to save CPU
+  if (millis() - lastFrame < 20) return;
+  lastFrame = millis();
+
+  // 2. Fill strip with rainbow
+  for(int i=0; i<NUMPIXELS; i++) {
+    // Hue varies slightly per pixel to create the wave
+    int pixelHue = firstPixelHue + (i * 65536L / NUMPIXELS);
+    // ColorHSV creates the rainbow color
+    pixels.setPixelColor(i, pixels.gamma32(pixels.ColorHSV(pixelHue)));
+  }
+
+  // 3. Advance the rainbow for next time
+  firstPixelHue += 256; 
+  
+  // 4. Mark dirty so Led_update() knows to draw it
+  ledDirty = true; 
+}

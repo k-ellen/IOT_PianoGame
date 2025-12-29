@@ -19,3 +19,6 @@
 #define KEY_SHIFT 36
 #define FIRST_KEY 36
 #define LAST_KEY 96
+// ===== LEARNING SEGMENTS =====
+#define SEGMENT_CHORDS 5   // number of chord-steps per segment
+#define MAX_SEGMENTS   256
