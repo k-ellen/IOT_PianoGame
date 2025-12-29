@@ -2,7 +2,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 enum SongSource { global, private }
 
-
 class Song {
   final String id;
   final String name;
@@ -45,11 +44,11 @@ class SongVariant {
   final String artist;
   final String genre;
 
-  final String difficulty; 
-  final String hands;      
+  final String difficulty;
+  final String hands;
   final String storagePath;
 
-  final String sourceCollection; 
+  final String sourceCollection;
   final String songId;
 
   SongVariant({
