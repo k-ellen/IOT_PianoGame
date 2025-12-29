@@ -17,8 +17,20 @@ class ActiveUserService {
     return _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(_lockRef);
 
-      // No lock exists yet
-      if (!snapshot.exists || snapshot.data()?['uid'] == null) {
+      // No document yet
+      if (!snapshot.exists) {
+        transaction.set(_lockRef, {
+          'uid': uid,
+          'songId': songId,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        return true;
+      }
+
+      final data = snapshot.data() as Map<String, dynamic>?;
+
+      // No active user
+      if (data == null || data['uid'] == null) {
         transaction.set(_lockRef, {
           'uid': uid,
           'songId': songId,
@@ -28,7 +40,7 @@ class ActiveUserService {
       }
 
       // Same user re-entering
-      if (snapshot.data()?['uid'] == uid) {
+      if (data['uid'] == uid) {
         return true;
       }
 
@@ -46,7 +58,11 @@ class ActiveUserService {
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(_lockRef);
 
-      if (snapshot.exists && snapshot.data()?['uid'] == uid) {
+      if (!snapshot.exists) return;
+
+      final data = snapshot.data() as Map<String, dynamic>?;
+
+      if (data != null && data['uid'] == uid) {
         transaction.set(_lockRef, {
           'uid': null,
           'songId': null,

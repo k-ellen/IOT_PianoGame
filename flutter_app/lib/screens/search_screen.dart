@@ -6,6 +6,7 @@ import '../widgets/footer/bottom_navigation_bar.dart';
 import '../models/song.dart';
 import 'package:flutter_app/widgets/body/search/song_tile.dart';
 import 'package:flutter_app/screens/song_screen.dart';
+import '../services/active_user_service.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -15,6 +16,8 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
+  final ActiveUserService _activeUserService = ActiveUserService();
+
   // ================= FILTER STATE =================
   Set<String> _selectedGenres = {};
   String? _selectedDifficulty; // single select
@@ -48,7 +51,28 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void dispose() {
     _scrollController.dispose();
+    _activeUserService.release();
     super.dispose();
+  }
+
+  void _showSongBusyDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.black,
+        title: const Text('Song in Use', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Another user is currently playing a song.\nPlease try again later.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   String _cleanGenre(dynamic raw) {
@@ -289,7 +313,17 @@ class _SearchScreenState extends State<SearchScreen> {
                             difficulties: v.difficulty,
                             hands: v.hands,
                             index: i,
-                            onTap: () {
+                            onTap: () async {
+                              final allowed = await _activeUserService
+                                  .tryEnterSong(songId: v.songId);
+
+                              if (!allowed) {
+                                _showSongBusyDialog(context);
+                                return;
+                              }
+
+                              if (!mounted) return;
+
                               Navigator.push(
                                 context,
                                 MaterialPageRoute(
@@ -361,6 +395,26 @@ class _SearchScreenState extends State<SearchScreen> {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  void _showSongBusyDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.black,
+        title: const Text('Song in Use', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Another user is currently playing a song.\nPlease try again later.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
       ),
     );
   }
