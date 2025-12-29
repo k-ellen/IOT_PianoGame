@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/header/my_header.dart';
+import '../services/auth_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -12,6 +14,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+
+  final _authService = AuthService();
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -50,16 +55,38 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     const SizedBox(height: 70),
 
                     _primaryButton(
-                      text: 'Signup',
-                      onTap: () async {
-                        if (_passwordController.text !=
-                            _confirmPasswordController.text) {
-                          _showError('Passwords do not match');
-                          return;
-                        }
+                      text: _isLoading ? 'Signing up...' : 'Signup',
+                      onTap: _isLoading
+                          ? () {}
+                          : () async {
+                              if (_passwordController.text !=
+                                  _confirmPasswordController.text) {
+                                _showError('Passwords do not match');
+                                return;
+                              }
 
-                        // TODO: sign up
-                      },
+                              setState(() => _isLoading = true);
+
+                              try {
+                                await _authService.signUp(
+                                  email: _emailController.text.trim(),
+                                  password: _passwordController.text.trim(),
+                                );
+
+                                if (!mounted) return;
+
+                                Navigator.pushReplacementNamed(
+                                  context,
+                                  '/home',
+                                );
+                              } on FirebaseAuthException catch (e) {
+                                _showError(e.message ?? 'Signup failed');
+                              } catch (_) {
+                                _showError('Something went wrong');
+                              } finally {
+                                if (mounted) setState(() => _isLoading = false);
+                              }
+                            },
                     ),
                   ],
                 ),

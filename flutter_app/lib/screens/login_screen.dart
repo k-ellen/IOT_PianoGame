@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../widgets/header/my_header.dart';
+import '../services/auth_service.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class SignInScreen extends StatefulWidget {
   const SignInScreen({super.key});
@@ -11,6 +13,9 @@ class SignInScreen extends StatefulWidget {
 class _SignInScreenState extends State<SignInScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _authService = AuthService();
+
+  bool _isLoading = false;
 
   @override
   Widget build(BuildContext context) {
@@ -42,10 +47,32 @@ class _SignInScreenState extends State<SignInScreen> {
                     const SizedBox(height: 70),
 
                     _primaryButton(
-                      text: 'Signin',
-                      onTap: () async {
-                        // TODO: sign in
-                      },
+                      text: _isLoading ? 'Signing in...' : 'Signin',
+                      onTap: _isLoading
+                          ? () {}
+                          : () async {
+                              setState(() => _isLoading = true);
+
+                              try {
+                                await _authService.signIn(
+                                  email: _emailController.text.trim(),
+                                  password: _passwordController.text.trim(),
+                                );
+
+                                if (!mounted) return;
+
+                                Navigator.pushReplacementNamed(
+                                  context,
+                                  '/home',
+                                );
+                              } on FirebaseAuthException catch (e) {
+                                _showError(e.message ?? 'Signin failed');
+                              } catch (_) {
+                                _showError('Something went wrong');
+                              } finally {
+                                if (mounted) setState(() => _isLoading = false);
+                              }
+                            },
                     ),
                   ],
                 ),
@@ -91,6 +118,23 @@ class _SignInScreenState extends State<SignInScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
         ),
         child: Text(text, style: const TextStyle(fontSize: 16)),
+      ),
+    );
+  }
+
+  void _showError(String message) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.black,
+        title: const Text('Error', style: TextStyle(color: Colors.white)),
+        content: Text(message, style: const TextStyle(color: Colors.white70)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
       ),
     );
   }

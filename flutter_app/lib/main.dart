@@ -5,6 +5,7 @@ import 'package:flutter_app/screens/search_screen.dart';
 import 'package:flutter_app/screens/welcome_screen.dart';
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,8 +22,9 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner:
           false, //disables flutter's default of displaying debug on the screen
       title: 'Piano Teacher App',
-      home:
-          const WelcomeScreen(), //when the app opens we will see the home screen
+      home: FirebaseAuth.instance.currentUser == null
+          ? const WelcomeScreen()
+          : const HomeScreen(),
       routes: {
         '/upload': (context) => const UploadScreen(),
         '/search': (context) => const SearchScreen(),
