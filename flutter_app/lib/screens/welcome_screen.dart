@@ -30,7 +30,7 @@ class WelcomeScreen extends StatelessWidget {
 
               // App name
               const Text(
-                'PianoTeacher',
+                'Piano Teacher',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 26,

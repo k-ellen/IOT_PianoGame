@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import '../widgets/my_button.dart';
-import 'package:flutter_app/services/global_songs_import.dart';
 
 class HomeScreen extends StatelessWidget {
   //HomeScreen is a screen that doesnt change
@@ -57,8 +56,6 @@ class HomeScreen extends StatelessWidget {
                 },
               ),
 
-
-              
               //(Development Tool
               //Runs a process that imports all global songs into Firestore
               /*
@@ -83,8 +80,6 @@ class HomeScreen extends StatelessWidget {
                 child: const Text("Import Global Songs"),
               ),
             */
-            
-            
             ],
           ),
         ),

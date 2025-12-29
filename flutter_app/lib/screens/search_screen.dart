@@ -399,26 +399,6 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 
-  void _showSongBusyDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        backgroundColor: Colors.black,
-        title: const Text('Song in Use', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Another user is currently playing a song.\nPlease try again later.',
-          style: TextStyle(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
-    );
-  }
-
   // ================= Sheets =================
 
   void _openGenreSheet() async {

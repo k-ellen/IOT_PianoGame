@@ -580,7 +580,7 @@ class _SongScreenState extends State<SongScreen> {
 
             if (!_didInitHandsChoiceFromInitial) {
               if (initialChoiceFound != null) {
-                _handsChoice = initialChoiceFound!;
+                _handsChoice = initialChoiceFound;
               } else {
                 if (showHandsSelector) {
                   _handsChoice = (initialHandsClean == 'BOTH')
@@ -607,21 +607,6 @@ class _SongScreenState extends State<SongScreen> {
 
             return LayoutBuilder(
               builder: (context, constraints) {
-                final double viewportH = constraints.maxHeight;
-
-                final double estimatedBelowCover =
-                    16 + // spacing
-                    70 + // title+artist
-                    32 + // extra space before block
-                    (showDifficultySelector || showHandsSelector ? 78 : 0) +
-                    12 +
-                    56 + // metronome
-                    14 +
-                    58 + // memorize/follow
-                    14 +
-                    56 + // play
-                    12;
-
                 final double screenHeight = MediaQuery.of(context).size.height;
                 final double screenWidth = MediaQuery.of(context).size.width;
 
