@@ -93,3 +93,26 @@ bool FirebaseControl_downloadToSD(const String &remotePath,
       mem_storage_type_sd
   );
 }
+
+void FirebaseControl_checkStop() {
+  static unsigned long lastStopCheck = 0;
+  
+  // Only check every 500ms to avoid audio stutter
+  if (millis() - lastStopCheck < 500) return;
+  lastStopCheck = millis();
+
+  if (!Firebase.ready()) return;
+
+  // Check the status node directly
+  if (Firebase.RTDB.getString(&fbdo, "/esp32API/playCommand/status")) {
+    String status = fbdo.stringData();
+    status.trim();
+    status.toLowerCase();
+
+    // If status changed to anything other than "playing", STOP!
+    if (status != "playing") {
+      stopRequested = true;
+      Serial.println("🛑 Stop command detected!");
+    }
+  }
+}

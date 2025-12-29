@@ -89,7 +89,17 @@ bool MidiParser::preloadNext(uint8_t i) {
   }
 
   MidiEvent ev;
+  // Track index is always known, even for MIDI_NONE (skipped) events.
+  ev.track = i;
+
   uint8_t cmd = status & 0xF0;
+  // Only channel voice messages carry a meaningful MIDI channel.
+  // For meta/sysex we keep ch=0.
+  if (cmd >= 0x80 && cmd <= 0xE0) {
+    ev.ch = status & 0x0F;
+  } else {
+    ev.ch = 0;
+  }
 
   if (cmd == 0x90) {
     ev.note = file.read();
@@ -102,6 +112,8 @@ bool MidiParser::preloadNext(uint8_t i) {
     ev.type = MIDI_NOTE_OFF;
   }
   else if (status == 0xFF) {
+    // Meta event: channel is not applicable
+    ev.ch = 0;
     uint8_t type = file.read();
     uint32_t len = readVLQ();
     if (type == 0x2F) {

@@ -21,6 +21,12 @@ static int leds[][3] = {
 void Led_init() {
   pixels.begin();
   pixels.clear();
+  pixels.setBrightness(128);
+  pixels.show();
+}
+
+void Led_clear() {
+  pixels.clear();
   pixels.show();
 }
 
@@ -35,4 +41,15 @@ void Led_noteOn(uint8_t note, uint32_t color) {
 
 void Led_noteOff(uint8_t note) {
   Led_noteOn(note, 0);
+}
+
+void setLedBuffer(int note, uint32_t color) {
+  // Adjust 'note' if your strip index is offset (e.g., note - 21)
+  int pixelIndex = note - KEY_SHIFT; 
+  if (pixelIndex < 0 || pixelIndex >= (int)(sizeof(leds) / sizeof(leds[0]))) return;
+  for (int i = 0; i < 3; i++) {
+    int led = leds[pixelIndex][i];
+    if (led != -1) pixels.setPixelColor(led, color);
+  }
+  pixels.show();
 }
