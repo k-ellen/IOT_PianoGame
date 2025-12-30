@@ -6,7 +6,6 @@ import '../widgets/footer/bottom_navigation_bar.dart';
 import '../models/song.dart';
 import 'package:flutter_app/widgets/body/search/song_tile.dart';
 import 'package:flutter_app/screens/song_screen.dart';
-import '../services/active_user_service.dart';
 
 class SearchScreen extends StatefulWidget {
   const SearchScreen({super.key});
@@ -16,7 +15,6 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
-  final ActiveUserService _activeUserService = ActiveUserService();
 
   // ================= FILTER STATE =================
   Set<String> _selectedGenres = {};
@@ -51,7 +49,6 @@ class _SearchScreenState extends State<SearchScreen> {
   @override
   void dispose() {
     _scrollController.dispose();
-    _activeUserService.release();
     super.dispose();
   }
 
@@ -313,15 +310,7 @@ class _SearchScreenState extends State<SearchScreen> {
                             difficulties: v.difficulty,
                             hands: v.hands,
                             index: i,
-                            onTap: () async {
-                              final allowed = await _activeUserService
-                                  .tryEnterSong(songId: v.songId);
-
-                              if (!allowed) {
-                                _showSongBusyDialog(context);
-                                return;
-                              }
-
+                            onTap: () {
                               if (!mounted) return;
 
                               Navigator.push(
@@ -338,7 +327,7 @@ class _SearchScreenState extends State<SearchScreen> {
                               );
                             },
                           );
-                        },
+                                                  },
                       ),
                     );
                   },
