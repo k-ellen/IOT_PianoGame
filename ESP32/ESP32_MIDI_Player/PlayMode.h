@@ -3,7 +3,8 @@
 enum PlayMode {
   MODE_FREE = 0,
   MODE_SONG_AUDIO,
-  MODE_SONG_METRONOME
+  MODE_SONG_METRONOME,
+  MODE_LEARN
 };
 
 // Current playback mode

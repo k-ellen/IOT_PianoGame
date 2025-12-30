@@ -1,0 +1,94 @@
+import 'package:flutter/material.dart';
+import 'search_screen.dart';
+import '../widgets/my_button.dart';
+import 'package:flutter_app/services/global_songs_import.dart';
+
+class HomeScreen extends StatelessWidget {
+  //HomeScreen is a screen that doesnt change
+  const HomeScreen({super.key}); //constructor
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFF1E1E1E),
+      body: SafeArea(
+        child: Center(
+          child: Column(
+            mainAxisSize:
+                MainAxisSize.min, //A column will only hold what it needs
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(32),
+                child: Image.asset(
+                  'assets/images/logo.png',
+                  width: 180,
+                  height: 180,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              const SizedBox(
+                height: 24,
+              ), //24 pixel space between image and text
+              const Text(
+                'Piano Teacher',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 28,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+
+              const SizedBox(
+                height: 32,
+              ), //space between the logo and the button
+
+              MyButton(
+                title: 'Get Started',
+                color: Colors.greenAccent,
+                onPressed: () {
+                  //when the button is pressed
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          const SearchScreen(), //go to the search screen
+                    ),
+                  );
+                },
+              ),
+
+
+              
+              //(Development Tool
+              //Runs a process that imports all global songs into Firestore
+              /*
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: () async {
+                  try {
+                    await importGlobalSongsToFirestore(); //The button runs the function that imports all songs into the Firestore database
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      //The app displays a Snackbar at the bottom of the screen which indicates that the import was successful
+                      const SnackBar(content: Text("Import completed")),
+                    );
+                  } catch (e, st) {
+                    print('Import error: $e');
+                    print(st);
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text("Import error: $e")));
+                  }
+                },
+                child: const Text("Import Global Songs"),
+              ),
+            */
+            
+            
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

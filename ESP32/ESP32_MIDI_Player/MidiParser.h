@@ -16,9 +16,12 @@ enum MidiEventType : uint8_t {
 
 struct MidiEvent {
   MidiEventType type = MIDI_NONE;
+  // MIDI channel (0-15). For meta events (tempo/end) this will be 0.
+  uint8_t ch = 0;
   uint8_t note = 0;
   uint8_t velocity = 0;
   uint32_t tempoUS = 0;   // microseconds per quarter note
+  uint8_t track = 0;
 };
 
 // =======================

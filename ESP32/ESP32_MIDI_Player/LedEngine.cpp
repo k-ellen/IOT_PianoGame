@@ -21,6 +21,12 @@ static int leds[][3] = {
 void Led_init() {
   pixels.begin();
   pixels.clear();
+  pixels.setBrightness(128);
+  pixels.show();
+}
+
+void Led_clear() {
+  pixels.clear();
   pixels.show();
 }
 
@@ -38,6 +44,40 @@ void Led_noteOn(uint8_t note, uint32_t color) {
 
 void Led_noteOff(uint8_t note) {
   Led_noteOn(note, 0);
+}
+
+void setLedBuffer(int note, uint32_t color) {
+  // Adjust 'note' if your strip index is offset (e.g., note - 21)
+  int pixelIndex = note - KEY_SHIFT; 
+  if (pixelIndex < 0 || pixelIndex >= (int)(sizeof(leds) / sizeof(leds[0]))) return;
+  for (int i = 0; i < 3; i++) {
+    int led = leds[pixelIndex][i];
+    if (led != -1) pixels.setPixelColor(led, color);
+  }
+  pixels.show();
+}
+
+void Led_animateRainbow() {
+  static uint16_t firstPixelHue = 0;
+  static unsigned long lastFrame = 0;
+
+  // 1. Limit Framerate (e.g., 20ms = 50 FPS) to save CPU
+  if (millis() - lastFrame < 20) return;
+  lastFrame = millis();
+
+  // 2. Fill strip with rainbow
+  for(int i=0; i<NUMPIXELS; i++) {
+    // Hue varies slightly per pixel to create the wave
+    int pixelHue = firstPixelHue + (i * 65536L / NUMPIXELS);
+    // ColorHSV creates the rainbow color
+    pixels.setPixelColor(i, pixels.gamma32(pixels.ColorHSV(pixelHue)));
+  }
+
+  // 3. Advance the rainbow for next time
+  firstPixelHue += 256; 
+  
+  // 4. Mark dirty so Led_update() knows to draw it
+  ledDirty = true; 
 }
 
 // ✅ NEW: immediate clear of entire strip
