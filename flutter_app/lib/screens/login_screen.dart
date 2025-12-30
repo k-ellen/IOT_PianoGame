@@ -60,11 +60,9 @@ class _SignInScreenState extends State<SignInScreen> {
                                 );
 
                                 if (!mounted) return;
+                                Navigator.pushNamedAndRemoveUntil(context, '/search', (route) => false);
 
-                                Navigator.pushReplacementNamed(
-                                  context,
-                                  '/home',
-                                );
+                                
                               } on FirebaseAuthException catch (e) {
                                 _showError(e.message ?? 'Signin failed');
                               } catch (_) {

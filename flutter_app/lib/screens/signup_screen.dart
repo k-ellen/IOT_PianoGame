@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../widgets/header/my_header.dart';
 import '../services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+
 
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
@@ -74,15 +76,15 @@ class _SignUpScreenState extends State<SignUpScreen> {
                                 );
 
                                 if (!mounted) return;
+                                Navigator.pushNamedAndRemoveUntil(context, '/search', (route) => false);
 
-                                Navigator.pushReplacementNamed(
-                                  context,
-                                  '/home',
-                                );
+                               
                               } on FirebaseAuthException catch (e) {
                                 _showError(e.message ?? 'Signup failed');
-                              } catch (_) {
-                                _showError('Something went wrong');
+                              } catch (e, st) {
+                                debugPrint('SIGNUP ERROR: $e');
+                                debugPrint('$st');
+                                _showError(e.toString());
                               } finally {
                                 if (mounted) setState(() => _isLoading = false);
                               }

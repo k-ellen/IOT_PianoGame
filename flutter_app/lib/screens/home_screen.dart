@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'search_screen.dart';
 import '../widgets/my_button.dart';
 import 'package:flutter_app/services/global_songs_import.dart';
+import '../services/auth_service.dart';
 
 class HomeScreen extends StatelessWidget {
   //HomeScreen is a screen that doesnt change
@@ -56,6 +57,17 @@ class HomeScreen extends StatelessWidget {
                   );
                 },
               ),
+            const SizedBox(height: 16),
+
+              MyButton(
+              title: 'Logout',
+              color: Colors.redAccent,
+              onPressed: () async {
+                await AuthService().signOut();
+                if (!context.mounted) return;
+                 Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+              },
+            ),
 
 
               
