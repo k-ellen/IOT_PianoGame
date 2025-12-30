@@ -3,6 +3,7 @@
 #include <SPI.h>
 #include <MIDI.h>
 
+#include "SdLock.h"
 #include "Config.h"
 #include "PlayMode.h"
 #include "AudioEngine.h"
@@ -93,6 +94,7 @@ static void handleNoteOff(byte channel, byte note, byte velocity) {
   }
 }
 
+
 // =======================
 // SETUP
 // =======================
@@ -112,11 +114,12 @@ static void connectWiFi() {
 }
 
 static void initSD() {
-  if (!SD.begin(SD_CS_PIN)) {
-    Serial.println("❌ SD init failed");
-  } else {
-    Serial.println("✅ SD OK");
-  }
+  SdLock_take();
+  bool sdOk = SD.begin(SD_CS_PIN);
+  SdLock_give();
+
+  if (!sdOk) Serial.println("❌ SD init failed");
+  else Serial.println("✅ SD ready");
 }
 
 static void initMidiIn() {
@@ -132,6 +135,8 @@ static void initMidiIn() {
 void setup() {
   Serial.begin(115200);
   delay(200);
+  
+  SdLock_init();
 
   connectWiFi();
   initSD();

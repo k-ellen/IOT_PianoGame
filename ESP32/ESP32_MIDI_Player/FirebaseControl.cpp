@@ -79,7 +79,7 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
 }
 
 bool FirebaseControl_downloadToSD(const String &remotePath,
-                                  String &outLocalPath) {
+                                 String &outLocalPath) {
   String fileName = remotePath.substring(remotePath.lastIndexOf('/') + 1);
   outLocalPath = "/" + fileName;
 
