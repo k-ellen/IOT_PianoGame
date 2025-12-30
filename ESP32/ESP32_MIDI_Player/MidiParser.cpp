@@ -116,10 +116,12 @@ bool MidiParser::preloadNext(uint8_t i) {
     tr.runningStatus = status;
   }
 
-  // Track index is always known, even for MIDI_NONE (skipped) events.
-  ev.track = i;
+  // // // Track index is always known, even for MIDI_NONE (skipped) events.
+  // ev.track = i;
 
   MidiEvent ev{};
+  ev.track = i;
+
   uint8_t cmd = status & 0xF0;
   // Only channel voice messages carry a meaningful MIDI channel.
   // For meta/sysex we keep ch=0.

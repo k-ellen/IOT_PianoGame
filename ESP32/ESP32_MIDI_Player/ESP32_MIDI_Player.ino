@@ -59,7 +59,7 @@ static void handleNoteOn(byte channel, byte note, byte velocity) {
   // 3. YOUR LOGIC (Game vs Free Play)
   if (currentMode == MODE_LEARN) {
     // Forward to Game Engine
-    Player_onNoteOn(note, velocity); 
+    Player_onNoteOn(note); 
   } 
   else if (currentMode == MODE_FREE) {
     // Free play: Green LED + Synth
@@ -86,7 +86,7 @@ static void handleNoteOff(byte channel, byte note, byte velocity) {
 
   // 2. Standard Logic
   if (currentMode == MODE_LEARN) {
-    Player_onNoteOff(note, velocity);
+    Player_onNoteOff(note);
   } 
   else if (currentMode == MODE_FREE) {
     Led_noteOff(note);
