@@ -1,14 +1,17 @@
 #include "MidiParser.h"
+#include "SdLock.h"
 
 // =======================
 // LOW-LEVEL READERS
 // =======================
 
 uint16_t MidiParser::readBE16() {
+  SdGuard g;
   return ((uint16_t)file.read() << 8) | file.read();
 }
 
 uint32_t MidiParser::readBE32() {
+  SdGuard g;
   return ((uint32_t)file.read() << 24) |
          ((uint32_t)file.read() << 16) |
          ((uint32_t)file.read() << 8) |
@@ -19,6 +22,7 @@ uint32_t MidiParser::readVLQ() {
   uint32_t v = 0;
   int c;
   do {
+    SdGuard g;
     c = file.read();
     v = (v << 7) | (c & 0x7F);
   } while (c & 0x80);
@@ -30,11 +34,17 @@ uint32_t MidiParser::readVLQ() {
 // =======================
 
 bool MidiParser::open(const String& path) {
-  file = SD.open(path.c_str());
+  {
+    SdGuard g;
+    file = SD.open(path.c_str(), FILE_READ);
+  }
   if (!file) return false;
 
   char hdr[4];
-  file.read((uint8_t*)hdr, 4);
+  {
+    SdGuard g;
+    file.read((uint8_t*)hdr, 4);
+  }
   if (memcmp(hdr, "MThd", 4) != 0) return false;
 
   readBE32();            // header length
@@ -46,10 +56,16 @@ bool MidiParser::open(const String& path) {
   if (numTracks > MAX_TRACKS) numTracks = MAX_TRACKS;
 
   for (int i = 0; i < numTracks; i++) {
-    file.read((uint8_t*)hdr, 4); // MTrk
+    {
+      SdGuard g;
+      file.read((uint8_t*)hdr, 4); // MTrk
+    }
     uint32_t len = readBE32();
 
-    tracks[i].startPos = file.position();
+    {
+      SdGuard g;
+      tracks[i].startPos = file.position();
+    }
     tracks[i].endPos = tracks[i].startPos + len;
     tracks[i].curPos = tracks[i].startPos;
     tracks[i].nextAbsTicks = 0;
@@ -57,7 +73,11 @@ bool MidiParser::open(const String& path) {
     tracks[i].ended = false;
 
     preloadNext(i);
-    file.seek(tracks[i].endPos);
+
+    {
+      SdGuard g;
+      file.seek(tracks[i].endPos);
+    }
   }
 
   return true;
@@ -75,58 +95,79 @@ bool MidiParser::preloadNext(uint8_t i) {
     return false;
   }
 
-  file.seek(tr.curPos);
+  {
+    SdGuard g;
+    file.seek(tr.curPos);
+  }
   tr.nextAbsTicks += readVLQ();
 
   uint8_t status;
-  int peek = file.peek();
+  int peek;
+  {
+    SdGuard g;
+    peek = file.peek();
+  }
 
   if (peek < 0x80) {
     status = tr.runningStatus;
   } else {
+    SdGuard g;
     status = file.read();
     tr.runningStatus = status;
   }
 
-  MidiEvent ev;
+  MidiEvent ev{};
   uint8_t cmd = status & 0xF0;
 
   if (cmd == 0x90) {
+    SdGuard g;
     ev.note = file.read();
     ev.velocity = file.read();
     ev.type = (ev.velocity == 0) ? MIDI_NOTE_OFF : MIDI_NOTE_ON;
   }
   else if (cmd == 0x80) {
+    SdGuard g;
     ev.note = file.read();
     ev.velocity = file.read();
     ev.type = MIDI_NOTE_OFF;
   }
   else if (status == 0xFF) {
-    uint8_t type = file.read();
+    uint8_t type;
+    {
+      SdGuard g;
+      type = file.read();
+    }
     uint32_t len = readVLQ();
+
     if (type == 0x2F) {
       ev.type = MIDI_END;
       tr.ended = true;
     }
     else if (type == 0x51 && len == 3) {
       ev.type = MIDI_TEMPO;
+      SdGuard g;
       ev.tempoUS = ((uint32_t)file.read() << 16) |
                    ((uint32_t)file.read() << 8) |
                    file.read();
     }
     else {
+      SdGuard g;
       file.seek(file.position() + len);
       ev.type = MIDI_NONE;
     }
   }
   else {
     // Skip unsupported messages
+    SdGuard g;
     if (cmd == 0xC0 || cmd == 0xD0) file.read();
     else { file.read(); file.read(); }
     ev.type = MIDI_NONE;
   }
 
-  tr.curPos = file.position();
+  {
+    SdGuard g;
+    tr.curPos = file.position();
+  }
   tr.nextEvent = ev;
   return true;
 }
@@ -165,5 +206,6 @@ uint16_t MidiParser::getDivision() const {
 }
 
 void MidiParser::close() {
+  SdGuard g;
   if (file) file.close();
 }

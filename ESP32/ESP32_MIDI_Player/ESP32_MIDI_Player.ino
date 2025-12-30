@@ -3,6 +3,7 @@
 #include <SPI.h>
 #include <MIDI.h>
 
+#include "SdLock.h"
 #include "Config.h"
 #include "PlayMode.h"
 #include "AudioEngine.h"
@@ -32,6 +33,7 @@ void handleFreePlayNoteOff(byte ch, byte note, byte vel) {
   Led_noteOff(note);
 }
 
+
 // =======================
 // SETUP
 // =======================
@@ -39,6 +41,8 @@ void handleFreePlayNoteOff(byte ch, byte note, byte vel) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+  SdLock_init();
 
   // ---- WIFI ----
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -49,11 +53,12 @@ void setup() {
   Serial.println("\n✅ WiFi connected");
 
   // ---- SD ----
-  if (!SD.begin(SD_CS_PIN)) {
-    Serial.println("❌ SD init failed");
-  } else {
-    Serial.println("✅ SD ready");
-  }
+  SdLock_take();
+  bool sdOk = SD.begin(SD_CS_PIN);
+  SdLock_give();
+
+  if (!sdOk) Serial.println("❌ SD init failed");
+  else Serial.println("✅ SD ready");
 
   // ---- ENGINES ----
   Audio_init();
@@ -61,6 +66,14 @@ void setup() {
 
   // ---- FIREBASE ----
   FirebaseControl_init();
+
+  // // ---- DOWNLOAD PIANO SAMPLES (RUN ONCE) ----
+  // if (!FirebaseControl_downloadPianoSamples()) {
+  //   Serial.println("❌ Piano sample download failed");
+  // } else {
+  //   Serial.println("🎹 Piano samples ready");
+  // }
+
 
   // ---- MIDI FREE PLAY ----
   MIDI_SERIAL.begin(31250, SERIAL_8N1, MIDI_RX_PIN, -1);

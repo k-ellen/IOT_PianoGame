@@ -25,14 +25,23 @@ void Led_init() {
 }
 
 void Led_noteOn(uint8_t note, uint32_t color) {
-  int i = note - KEY_SHIFT;
+  int i = (int)note - KEY_SHIFT;
   if (i < 0) return;
-  for (int j = 0; j < 3; j++)
-    if (leds[i][j] != -1)
+
+  for (int j = 0; j < 3; j++) {
+    if (leds[i][j] != -1) {
       pixels.setPixelColor(leds[i][j], color);
+    }
+  }
   pixels.show();
 }
 
 void Led_noteOff(uint8_t note) {
   Led_noteOn(note, 0);
+}
+
+// ✅ NEW: immediate clear of entire strip
+void Led_clearAll() {
+  pixels.clear();
+  pixels.show();
 }

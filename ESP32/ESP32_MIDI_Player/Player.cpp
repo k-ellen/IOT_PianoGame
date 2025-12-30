@@ -5,6 +5,7 @@
 #include "AudioEngine.h"
 #include "LedEngine.h"
 #include "MidiParser.h"
+#include "FirebaseControl.h"
 
 static void playOnce(const String &path, PlayMode mode) {
   currentMode = mode;
@@ -34,6 +35,7 @@ static void playOnce(const String &path, PlayMode mode) {
 
       while (!stopRequested &&
              (int64_t)(startUS + globalTimeUS - micros()) > 0) {
+        FirebaseControl_pollStopFlag();
         delayMicroseconds(200);
       }
 
@@ -64,14 +66,19 @@ static void playOnce(const String &path, PlayMode mode) {
   }
 
   midi.close();
+
+  // ✅ Always clean up on exit (end or stop)
   Audio_allNotesOff();
+  Led_clearAll();
 }
 
 void Player_playSong(const String &path) {
   playOnce(path, MODE_SONG_AUDIO);
 
   if (stopRequested) {
+    // ✅ Immediate cleanup when stop pressed
     Audio_allNotesOff();
+    Led_clearAll();
     currentMode = MODE_FREE;
     return;
   }
@@ -79,5 +86,6 @@ void Player_playSong(const String &path) {
   playOnce(path, MODE_SONG_METRONOME);
 
   Audio_allNotesOff();
+  Led_clearAll();
   currentMode = MODE_FREE;
 }

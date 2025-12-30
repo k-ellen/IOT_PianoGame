@@ -79,7 +79,7 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
 }
 
 bool FirebaseControl_downloadToSD(const String &remotePath,
-                                  String &outLocalPath) {
+                                 String &outLocalPath) {
   String fileName = remotePath.substring(remotePath.lastIndexOf('/') + 1);
   outLocalPath = "/" + fileName;
 
@@ -92,4 +92,175 @@ bool FirebaseControl_downloadToSD(const String &remotePath,
       outLocalPath.c_str(),
       mem_storage_type_sd
   );
+}
+
+// ✅ NEW: minimal STOP polling (does not depend on commandsCounter)
+bool FirebaseControl_pollStopFlag() {
+  static unsigned long lastStopPoll = 0;
+
+  if (!Firebase.ready()) return false;
+  if (millis() - lastStopPoll < 300) return false; // don't spam RTDB
+  lastStopPoll = millis();
+
+  if (!Firebase.RTDB.getString(&fbdo, "/esp32API/playCommand/status"))
+    return false;
+
+  String status = fbdo.stringData();
+  status.trim();
+  status.toLowerCase();
+
+  if (status != "playing") {
+    stopRequested = true;
+    return true;
+  }
+
+  return false;
+}
+
+bool FirebaseControl_downloadPianoSamples() {
+  if (!Firebase.ready()) {
+    Serial.println("❌ Firebase not ready");
+    return false;
+  }
+
+  // Ensure /piano directory exists
+  if (!SD.exists("/piano")) {
+    Serial.println("📁 Creating /piano directory");
+    if (!SD.mkdir("/piano")) {
+      Serial.println("❌ Failed to create /piano");
+      return false;
+    }
+  }
+
+  char remotePath[128];
+  char localPath[128];
+
+  for (int i = 0; i <= 44; i+=2) {
+    snprintf(
+      remotePath,
+      sizeof(remotePath),
+      "piano/Player_dyn1_rr1_%03d.wav",
+      i
+    );
+
+    snprintf(
+      localPath,
+      sizeof(localPath),
+      "/piano/Player_dyn1_rr1_%03d.wav",
+      i
+    );
+
+    // Skip if already exists
+    if (SD.exists(localPath)) {
+      Serial.printf("✔ Exists: %s\n", localPath);
+      continue;
+    }
+
+    Serial.printf("⬇️ Downloading %s → %s\n",
+                  remotePath, localPath);
+
+    bool ok = Firebase.Storage.download(
+      &fbdo,
+      STORAGE_BUCKET_ID,
+      remotePath,
+      localPath,
+      mem_storage_type_sd
+    );
+
+    if (!ok) {
+      Serial.printf("❌ Failed: %s\n", remotePath);
+      Serial.println(fbdo.errorReason());
+      return false;
+    }
+
+    Serial.println("✅ Done");
+    delay(100); // avoid hammering Firebase
+  }
+
+  for (int i = 0; i <= 44; i+=2) {
+    snprintf(
+      remotePath,
+      sizeof(remotePath),
+      "piano/Player_dyn2_rr1_%03d.wav",
+      i
+    );
+
+    snprintf(
+      localPath,
+      sizeof(localPath),
+      "/piano/Player_dyn2_rr1_%03d.wav",
+      i
+    );
+
+    // Skip if already exists
+    if (SD.exists(localPath)) {
+      Serial.printf("✔ Exists: %s\n", localPath);
+      continue;
+    }
+
+    Serial.printf("⬇️ Downloading %s → %s\n",
+                  remotePath, localPath);
+
+    bool ok = Firebase.Storage.download(
+      &fbdo,
+      STORAGE_BUCKET_ID,
+      remotePath,
+      localPath,
+      mem_storage_type_sd
+    );
+
+    if (!ok) {
+      Serial.printf("❌ Failed: %s\n", remotePath);
+      Serial.println(fbdo.errorReason());
+      return false;
+    }
+
+    Serial.println("✅ Done");
+    delay(100); // avoid hammering Firebase
+  }
+
+  for (int i = 0; i <= 44; i+=2) {
+    snprintf(
+      remotePath,
+      sizeof(remotePath),
+      "piano/Player_dyn3_rr1_%03d.wav",
+      i
+    );
+
+    snprintf(
+      localPath,
+      sizeof(localPath),
+      "/piano/Player_dyn3_rr1_%03d.wav",
+      i
+    );
+
+    // Skip if already exists
+    if (SD.exists(localPath)) {
+      Serial.printf("✔ Exists: %s\n", localPath);
+      continue;
+    }
+
+    Serial.printf("⬇️ Downloading %s → %s\n",
+                  remotePath, localPath);
+
+    bool ok = Firebase.Storage.download(
+      &fbdo,
+      STORAGE_BUCKET_ID,
+      remotePath,
+      localPath,
+      mem_storage_type_sd
+    );
+
+    if (!ok) {
+      Serial.printf("❌ Failed: %s\n", remotePath);
+      Serial.println(fbdo.errorReason());
+      return false;
+    }
+
+    Serial.println("✅ Done");
+    delay(100); // avoid hammering Firebase
+  }
+
+  Serial.println("🎹 All piano samples downloaded");
+  return true;
 }
