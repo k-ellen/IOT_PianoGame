@@ -1,5 +1,6 @@
 #include "MidiParser.h"
 #include "SdLock.h"
+#include <string.h>
 
 // =======================
 // LOW-LEVEL READERS
@@ -49,7 +50,7 @@ bool MidiParser::open(const String& path) {
 
   readBE32();            // header length
   readBE16();            // format
-  numTracks = readBE16();
+  numTracks = (uint8_t)readBE16();
   division = readBE16();
   if (division == 0) division = 480;
 
@@ -72,7 +73,7 @@ bool MidiParser::open(const String& path) {
     tracks[i].runningStatus = 0;
     tracks[i].ended = false;
 
-    preloadNext(i);
+    preloadNext((uint8_t)i);
 
     {
       SdGuard g;
@@ -116,20 +117,12 @@ bool MidiParser::preloadNext(uint8_t i) {
     tr.runningStatus = status;
   }
 
-  // // // Track index is always known, even for MIDI_NONE (skipped) events.
-  // ev.track = i;
-
   MidiEvent ev{};
   ev.track = i;
 
   uint8_t cmd = status & 0xF0;
-  // Only channel voice messages carry a meaningful MIDI channel.
-  // For meta/sysex we keep ch=0.
-  if (cmd >= 0x80 && cmd <= 0xE0) {
-    ev.ch = status & 0x0F;
-  } else {
-    ev.ch = 0;
-  }
+  if (cmd >= 0x80 && cmd <= 0xE0) ev.ch = status & 0x0F;
+  else ev.ch = 0;
 
   if (cmd == 0x90) {
     SdGuard g;
@@ -144,29 +137,38 @@ bool MidiParser::preloadNext(uint8_t i) {
     ev.type = MIDI_NOTE_OFF;
   }
   else if (status == 0xFF) {
-    // Meta event: channel is not applicable
     ev.ch = 0;
-    uint8_t type;
+
+    uint8_t metaType;
     {
       SdGuard g;
-      type = file.read();
+      metaType = file.read();
     }
-    uint32_t len = readVLQ();
+    uint32_t metaLen = readVLQ();
 
-    if (type == 0x2F) {
+    if (metaType == 0x2F) {
       ev.type = MIDI_END;
       tr.ended = true;
     }
-    else if (type == 0x51 && len == 3) {
+    else if (metaType == 0x51 && metaLen == 3) {
       ev.type = MIDI_TEMPO;
       SdGuard g;
       ev.tempoUS = ((uint32_t)file.read() << 16) |
                    ((uint32_t)file.read() << 8) |
                    file.read();
     }
+    else if (metaType == 0x58 && metaLen == 4) {
+      // ✅ Time Signature: nn dd cc bb
+      ev.type = MIDI_TIME_SIG;
+      SdGuard g;
+      ev.tsNum = file.read();     // nn
+      ev.tsDenPow = file.read();  // dd (power of 2)
+      file.read();                // cc (ignore)
+      file.read();                // bb (ignore)
+    }
     else {
       SdGuard g;
-      file.seek(file.position() + len);
+      file.seek(file.position() + metaLen);
       ev.type = MIDI_NONE;
     }
   }
@@ -207,13 +209,9 @@ bool MidiParser::nextEvent(MidiEvent& out, uint64_t& outTicks) {
   out = tracks[best].nextEvent;
   outTicks = tracks[best].nextAbsTicks;
 
-  preloadNext(best);
+  preloadNext((uint8_t)best);
   return true;
 }
-
-// =======================
-// HELPERS
-// =======================
 
 uint16_t MidiParser::getDivision() const {
   return division;

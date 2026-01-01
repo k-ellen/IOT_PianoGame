@@ -39,7 +39,7 @@ struct Voice {
 };
 
 static Voice voices[MAX_VOICES];
-static float masterVolume = 1.2f;   // 🔊 louder
+static float masterVolume = 2.2f;   // 🔊 louder
 static volatile uint32_t metroSamples = 0;
 
 // =======================
@@ -158,16 +158,20 @@ static void audioTask(void*) {
             float vel = voices[v].velocity;
             portEXIT_CRITICAL(&voicesMux);
 
-            mix += (sample / 32768.0f) * vel;
+            mix += (sample * 0.000045f) * vel;  // ≈ 1.5× louder than before
           }
         }
       }
 
       mix *= masterVolume;
-      if (mix > 1.0f) mix = 1.0f;
-      if (mix < -1.0f) mix = -1.0f;
+      if (mix > 1.2f)  mix = 1.2f;
+      if (mix < -1.2f) mix = -1.2f;
 
-      int16_t s16 = (int16_t)(mix * 28000); // 🔊 louder DAC drive
+      // soft saturation
+      mix = mix / (1.0f + fabsf(mix));
+
+
+      int16_t s16 = (int16_t)(mix * 32760); // 🔊 louder DAC drive
       outBuf[i * 2]     = s16;
       outBuf[i * 2 + 1] = s16;
     }
