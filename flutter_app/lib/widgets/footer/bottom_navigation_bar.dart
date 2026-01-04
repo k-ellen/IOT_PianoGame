@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../screens/home_screen.dart';
 import '../../screens/search_screen.dart';
 import '../../screens/upload_screen.dart';
+import '../../screens/stats_screen.dart';
 
 class MyBottomNavigationBar extends StatelessWidget {
   final int currentIndex;
@@ -16,6 +17,7 @@ class MyBottomNavigationBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BottomNavigationBar(
+      type: BottomNavigationBarType.fixed,
       backgroundColor: const Color(0xFF000000),
       selectedItemColor: Colors.white,
       unselectedItemColor: Colors.grey,
@@ -23,10 +25,8 @@ class MyBottomNavigationBar extends StatelessWidget {
       items: const [
         BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
         BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
-        BottomNavigationBarItem(
-          icon: Icon(Icons.cloud_upload),
-          label: 'Upload',
-        ),
+        BottomNavigationBarItem(icon: Icon(Icons.cloud_upload), label: 'Upload'),
+        BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Stats'),
       ],
       onTap: (index) {
         if (onTap != null) {
@@ -47,6 +47,11 @@ class MyBottomNavigationBar extends StatelessWidget {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (context) => UploadScreen()),
+          );
+        } else if (index == 3 && currentIndex != 3) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const StatsScreen()),
           );
         }
       },

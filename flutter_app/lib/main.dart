@@ -7,6 +7,7 @@ import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'screens/auth_gate.dart';
+import 'screens/stats_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -28,6 +29,7 @@ Widget build(BuildContext context) {
     '/home': (context) => const HomeScreen(),
     '/search': (context) => const SearchScreen(),
     '/upload': (context) => const UploadScreen(),
+    '/stats': (context) => const StatsScreen(),
   },
 );
 }

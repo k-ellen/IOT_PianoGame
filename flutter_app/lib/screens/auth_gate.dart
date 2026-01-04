@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../services/stats_service.dart';
 import 'home_screen.dart';
 import 'welcome_screen.dart';
 
@@ -20,10 +22,39 @@ class AuthGate extends StatelessWidget {
         }
 
         if (snapshot.hasData) {
-          return const HomeScreen();      
+          final user = snapshot.data!;
+
+          return FutureBuilder(
+  future: StatsService(FirebaseFirestore.instance)
+      .ensureGeneralStats(user.uid),
+  builder: (context, statsSnapshot) {
+
+    if (statsSnapshot.hasError) {
+      return Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(
+          child: Text(
+            'Stats init error:\n${statsSnapshot.error}',
+            style: const TextStyle(color: Colors.red),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
+
+    if (statsSnapshot.connectionState != ConnectionState.done) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return const HomeScreen();
+  },
+);
         }
 
-        return const WelcomeScreen();     
+        return const WelcomeScreen();
       },
     );
   }

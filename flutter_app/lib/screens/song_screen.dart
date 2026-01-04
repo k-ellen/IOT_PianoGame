@@ -1,13 +1,15 @@
 import 'dart:async';
 
-import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction; 
+import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction;
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart' as rtdb;
 import 'package:flutter/material.dart';
 
-
 import '../widgets/footer/bottom_navigation_bar.dart';
 import '../widgets/header/my_header.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import '../services/stats_service.dart';
 
 enum _PlayMode { memorize, follow }
 enum _HandsChoice { oneHand, twoHands }
@@ -33,6 +35,16 @@ class SongScreen extends StatefulWidget {
 }
 
 class _SongScreenState extends State<SongScreen> {
+  // =====================
+  // Firebase RTDB refs
+  // =====================
+  late final rtdb.DatabaseReference _playRef;
+  late final rtdb.DatabaseReference _connectedRef;
+  rtdb.OnDisconnect? _onDisconnect;
+
+  late final StreamSubscription<rtdb.DatabaseEvent> _playSub;
+  late final StreamSubscription<rtdb.DatabaseEvent> _connSub;
+
   // ----------- auth -----------
   final FirebaseAuth _auth = FirebaseAuth.instance;
   String get _myUid => _auth.currentUser!.uid;
@@ -40,7 +52,6 @@ class _SongScreenState extends State<SongScreen> {
 
   // ----------- RTDB play state -----------
   bool isPlaying = false;
-
   String _ownerUid = '';
   String _ownerName = '';
   String _ownerSongTitle = '';
@@ -48,9 +59,6 @@ class _SongScreenState extends State<SongScreen> {
   bool get _iAmOwner => _ownerUid.isNotEmpty && _ownerUid == _myUid;
   bool get _isPlayingMine => isPlaying && _iAmOwner;
   bool get _someoneElsePlaying => isPlaying && !_iAmOwner;
-
-  late final rtdb.DatabaseReference ref;
-  late final StreamSubscription<rtdb.DatabaseEvent> subscription;
 
   // ----------- navigation / pop -----------
   bool _canPop = false;
@@ -60,6 +68,7 @@ class _SongScreenState extends State<SongScreen> {
   late String _selectedDifficulty;
   _HandsChoice _handsChoice = _HandsChoice.oneHand;
 
+  // Keep latest Firestore difficulties so we can recompute storage path on-demand.
   Map<String, dynamic> _lastDiffs = {};
   String _currentStoragePath = '';
 
@@ -75,22 +84,29 @@ class _SongScreenState extends State<SongScreen> {
     super.initState();
 
     _selectedDifficulty = _cleanDifficulty(widget.initialDifficulty);
-
     final String h = _cleanHandsLabel(widget.initialHands);
     _handsChoice = (h == 'BOTH') ? _HandsChoice.twoHands : _HandsChoice.oneHand;
 
-    ref = rtdb.FirebaseDatabase.instance.ref("esp32API/playCommand");
+    _playRef = rtdb.FirebaseDatabase.instance.ref("esp32API/playCommand");
+    _connectedRef = rtdb.FirebaseDatabase.instance.ref(".info/connected");
 
-    subscription = ref.onValue.listen((event) {
-      final Object? raw = event.snapshot.value;
-      if (!mounted || raw == null) return;
+    // Only for connection awareness (do NOT arm onDisconnect here!)
+    _connSub = _connectedRef.onValue.listen((event) {
+      final bool connected = (event.snapshot.value as bool?) ?? false;
+      if (!connected) {
+        // If we lost connection, the server might later run onDisconnect if armed.
+        // We keep this flag only as awareness; we re-arm on each successful start anyway.
+      }
+    });
 
+    // Listen play status + owner fields
+    _playSub = _playRef.onValue.listen((event) {
       final Map<dynamic, dynamic>? data =
-          raw is Map ? raw as Map<dynamic, dynamic> : null;
-      if (data == null) return;
+          event.snapshot.value as Map<dynamic, dynamic>?;
+      if (!mounted || data == null) return;
 
       setState(() {
-        isPlaying = (data["status"] ?? "stopped").toString() == "playing";
+        isPlaying = (data["status"] ?? "stopped") == "playing";
         _ownerUid = (data["ownerUid"] ?? "").toString();
         _ownerName = (data["ownerName"] ?? "").toString();
         _ownerSongTitle = (data["ownerSongTitle"] ?? "").toString();
@@ -100,8 +116,36 @@ class _SongScreenState extends State<SongScreen> {
 
   @override
   void dispose() {
-    subscription.cancel();
+    _playSub.cancel();
+    _connSub.cancel();
     super.dispose();
+  }
+
+  // ================= OnDisconnect (ONLY for owner) =================
+  Future<void> _armOnDisconnectIfConnected() async {
+    // Arm only when we are the owner (call this only after start success)
+    final rtdb.DataSnapshot snap = await _connectedRef.get();
+    final bool connected = (snap.value as bool?) ?? false;
+    if (!connected) return;
+
+    _onDisconnect ??= _playRef.onDisconnect();
+
+    // IMPORTANT: this will run if THIS client disconnects unexpectedly.
+    // We assume we arm it ONLY when this client is the current owner.
+    await _onDisconnect!.update({
+      "status": "stopped",
+      "ownerUid": "",
+      "ownerName": "",
+      "ownerSongId": "",
+      "ownerSongTitle": "",
+      "startedAt": 0,
+    });
+  }
+
+  Future<void> _disarmOnDisconnect() async {
+    // Cancel pending onDisconnect so it won't stop after we already stopped/left.
+    await _onDisconnect?.cancel();
+    _onDisconnect = null;
   }
 
   // ---------------- helpers ----------------
@@ -153,7 +197,7 @@ class _SongScreenState extends State<SongScreen> {
 
   // ---------------- RTDB commands ----------------
   Future<void> sendPlaybackCommand(bool play, String path) async {
-    final snapshot = await ref.get();
+    final rtdb.DataSnapshot snapshot = await _playRef.get();
     int count = 0;
 
     if (snapshot.exists) {
@@ -165,7 +209,7 @@ class _SongScreenState extends State<SongScreen> {
       }
     }
 
-    await ref.update({
+    await _playRef.update({
       "commandsCounter": count + 1,
       "fileToPlay": path,
       "playMode": _playModeToInt(_mode),
@@ -176,7 +220,7 @@ class _SongScreenState extends State<SongScreen> {
   }
 
   Future<void> _clearOwnerFields() async {
-    await ref.update({
+    await _playRef.update({
       "ownerUid": "",
       "ownerName": "",
       "ownerSongId": "",
@@ -185,47 +229,45 @@ class _SongScreenState extends State<SongScreen> {
     });
   }
 
-Future<bool> _tryStartPlayingWithLock(String path) async {
-  final rtdb.TransactionResult tr = await ref.runTransaction((currentData) {
-    final Map<dynamic, dynamic> data =
-        (currentData is Map)
-            ? Map<dynamic, dynamic>.from(currentData as Map)
-            : <dynamic, dynamic>{};
+  Future<bool> _tryStartPlayingWithLock(String path) async {
+    final rtdb.TransactionResult tr =
+        await _playRef.runTransaction((currentData) {
+      final Map<dynamic, dynamic> data = (currentData is Map)
+          ? Map<dynamic, dynamic>.from(currentData as Map)
+          : <dynamic, dynamic>{};
 
-    final String status = (data["status"] ?? "stopped").toString();
-    final String ownerUid = (data["ownerUid"] ?? "").toString();
+      final String status = (data["status"] ?? "stopped").toString();
+      final String ownerUid = (data["ownerUid"] ?? "").toString();
 
-    final bool someoneElsePlaying =
-        (status == "playing" && ownerUid.isNotEmpty && ownerUid != _myUid);
+      final bool someoneElsePlaying =
+          (status == "playing" && ownerUid.isNotEmpty && ownerUid != _myUid);
 
-    if (someoneElsePlaying) {
-      return rtdb.Transaction.abort();
-    }
+      if (someoneElsePlaying) {
+        return rtdb.Transaction.abort();
+      }
 
-    final Object? c = data["commandsCounter"];
-    final int count = c is int ? c : 0;
+      final Object? c = data["commandsCounter"];
+      final int count = c is int ? c : 0;
 
-    // update play command fields
-    data["commandsCounter"] = count + 1;
-    data["fileToPlay"] = path;
-    data["playMode"] = _playModeToInt(_mode);
-    data["status"] = "playing";
-    data["metronome"] = _metronomeOn;
-    data["speed"] = _chosenSpeed;
+      data["commandsCounter"] = count + 1;
+      data["fileToPlay"] = path;
+      data["playMode"] = _playModeToInt(_mode);
+      data["status"] = "playing";
+      data["metronome"] = _metronomeOn;
+      data["speed"] = _chosenSpeed;
 
-    // owner fields
-    data["ownerUid"] = _myUid;
-    data["ownerName"] = _myName;
-    data["ownerSongId"] = widget.songId;
-    data["ownerSongTitle"] = widget.title;
-    data["startedAt"] = DateTime.now().millisecondsSinceEpoch;
+      // owner fields
+      data["ownerUid"] = _myUid;
+      data["ownerName"] = _myName;
+      data["ownerSongId"] = widget.songId;
+      data["ownerSongTitle"] = widget.title;
+      data["startedAt"] = DateTime.now().millisecondsSinceEpoch;
 
-    return rtdb.Transaction.success(data);
-  });
+      return rtdb.Transaction.success(data);
+    });
 
-  return tr.committed;
-}
-
+    return tr.committed;
+  }
 
   // ---------------- dialogs ----------------
   Future<void> _showSomeoneElsePlayingDialog() async {
@@ -256,7 +298,6 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
   }
 
   Future<void> _showExitDialog() async {
-    // רק אם אני הבעלים ומנגן
     final bool? shouldLeave = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -281,6 +322,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
             onPressed: () async {
               await sendPlaybackCommand(false, _currentStoragePath);
               await _clearOwnerFields();
+              await _disarmOnDisconnect();
               if (context.mounted) Navigator.pop(context, true);
             },
             child: const Text("Stop & Leave"),
@@ -335,7 +377,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
 
   // ---------------- navigation ----------------
   Future<void> _handleNavLeave(int index) async {
-    // אם אני מנגנת → שואל stop. אם מישהו אחר מנגן → יוצא רגיל.
+    // Only if *I* am playing do we block exit
     if (_isPlayingMine) {
       _pendingNavIndex = index;
       await _showExitDialog();
@@ -472,7 +514,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
 
   // ---------------- change settings while playing ----------------
   Future<void> _attemptChangeWhilePlaying(void Function() applyChange) async {
-    // אם אני לא הבעלים – לא עוצרים שיר של מישהו אחר.
+    // If I'm not the owner, never stop someone else's song.
     if (!_isPlayingMine) {
       setState(() {
         applyChange();
@@ -486,6 +528,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
 
     await sendPlaybackCommand(false, _currentStoragePath);
     await _clearOwnerFields();
+    await _disarmOnDisconnect();
 
     if (!mounted) return;
 
@@ -497,13 +540,13 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
 
   // ---------------- memorize/follow ----------------
   Future<void> _onSelectFollow() async {
-    // אם אני מנגנת, קודם שואל stop
     if (_isPlayingMine) {
       final bool stopOk = await _showStopBeforeChangeDialog();
       if (!stopOk) return;
 
       await sendPlaybackCommand(false, _currentStoragePath);
       await _clearOwnerFields();
+      await _disarmOnDisconnect();
       if (!mounted) return;
 
       setState(() {
@@ -523,7 +566,6 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
       return;
     }
 
-    // אם מישהו אחר מנגן – אפשר עדיין לבחור מצב, אבל זה לא ישפיע עד שתנגני
     final bool ok = await _showChooseSpeedDialog();
     if (!ok) return;
     if (!mounted) return;
@@ -538,37 +580,56 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
 
       await sendPlaybackCommand(false, _currentStoragePath);
       await _clearOwnerFields();
+      await _disarmOnDisconnect();
       if (!mounted) return;
     }
 
     setState(() => _mode = _PlayMode.memorize);
   }
 
-  // ---------------- play/stop button ----------------
-  Future<void> _onPlayStopPressed() async {
-    _recomputeStoragePath();
-    final String path = _currentStoragePath;
-    if (path.isEmpty) return;
+// ---------------- play/stop button ----------------
+Future<void> _onPlayStopPressed() async {
+  _recomputeStoragePath();
+  final String path = _currentStoragePath;
+  if (path.isEmpty) return;
 
-    // מישהו אחר מנגן → לא מתחילים ולא עוצרים. רק הודעה.
-    if (_someoneElsePlaying) {
-      await _showSomeoneElsePlayingDialog();
-      return;
-    }
-
-    // אני מנגנת → Stop
-    if (_isPlayingMine) {
-      await sendPlaybackCommand(false, path);
-      await _clearOwnerFields();
-      return;
-    }
-
-    // אחרת → Start עם lock
-    final bool ok = await _tryStartPlayingWithLock(path);
-    if (!ok) {
-      await _showSomeoneElsePlayingDialog();
-    }
+  // Someone else playing => button stays "Learn Song", click shows dialog
+  if (_someoneElsePlaying) {
+    await _showSomeoneElsePlayingDialog();
+    return;
   }
+
+  // I am playing => Stop
+  if (_isPlayingMine) {
+    await sendPlaybackCommand(false, path);
+    await _clearOwnerFields();
+    await _disarmOnDisconnect();
+     final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await StatsService(FirebaseFirestore.instance)
+            .updateLastPracticeDate(user.uid);
+      }
+    return;
+  }
+
+  // Start with lock
+  final bool ok = await _tryStartPlayingWithLock(path);
+  if (!ok) {
+    await _showSomeoneElsePlayingDialog();
+    return;
+  }
+
+  final user = FirebaseAuth.instance.currentUser;
+  if (user != null) {
+    await StatsService(FirebaseFirestore.instance).onStartSong(
+      uid: user.uid,
+      songId: widget.songId,
+    );
+  }
+
+  // I became owner => arm onDisconnect so if I crash/close, it stops
+  await _armOnDisconnectIfConnected();
+}
 
   // ====================== UI ======================
   @override
@@ -623,6 +684,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
 
             _lastDiffs = diffs;
 
+            // Build map: label -> raw keys
             final Map<String, List<String>> rawKeysByDiffLabel = {};
             final List<String> unknownRawDiffKeys = <String>[];
 
@@ -641,6 +703,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
             final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()
               ..sort();
 
+            // If no known labels, but we do have UNKNOWN entries -> allow UNKNOWN
             if (diffLabels.isEmpty && unknownRawDiffKeys.isNotEmpty) {
               rawKeysByDiffLabel['UNKNOWN'] = unknownRawDiffKeys;
               diffLabels.add('UNKNOWN');
@@ -663,7 +726,8 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
             bool hasTwoHands = false;
 
             _HandsChoice? initialChoiceFound;
-            final String initialHandsClean = _cleanHandsLabel(widget.initialHands);
+            final String initialHandsClean =
+                _cleanHandsLabel(widget.initialHands);
 
             for (final String rawDiffKey in selectedRawDiffKeys) {
               final Map<String, dynamic> diffObj =
@@ -714,8 +778,12 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
             }
 
             if (!showHandsSelector) {
-              if (hasTwoHands && !hasOneHand) _handsChoice = _HandsChoice.twoHands;
-              if (hasOneHand && !hasTwoHands) _handsChoice = _HandsChoice.oneHand;
+              if (hasTwoHands && !hasOneHand) {
+                _handsChoice = _HandsChoice.twoHands;
+              }
+              if (hasOneHand && !hasTwoHands) {
+                _handsChoice = _HandsChoice.oneHand;
+              }
             }
 
             _recomputeStoragePath();
@@ -740,11 +808,14 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Center(
-                      child: Icon(Icons.music_note, size: 112, color: Colors.black),
+                      child: Icon(
+                        Icons.music_note,
+                        size: 112,
+                        color: Colors.black,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
-
                   Center(
                     child: Column(
                       children: [
@@ -761,14 +832,15 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
                         Text(
                           widget.artist,
                           textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white70, fontSize: 18),
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 18,
+                          ),
                         ),
                       ],
                     ),
                   ),
-
                   const SizedBox(height: 30),
-
                   if (showDifficultySelector || showHandsSelector) ...[
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -809,7 +881,6 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
                     ),
                     const SizedBox(height: 12),
                   ],
-
                   Row(
                     children: [
                       const SizedBox(
@@ -830,9 +901,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 14),
-
                   _SegmentedAction(
                     leftText: "Memorize Song",
                     rightText: "Follow Song",
@@ -840,9 +909,7 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
                     onLeft: _onSelectMemorize,
                     onRight: _onSelectFollow,
                   ),
-
                   const SizedBox(height: 90),
-
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: isPlayingMine
@@ -858,7 +925,10 @@ Future<bool> _tryStartPlayingWithLock(String path) async {
                     onPressed: canPlay ? _onPlayStopPressed : null,
                     child: Text(
                       isPlayingMine ? "Stop Song" : "Learn Song",
-                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -885,7 +955,10 @@ class _LabeledBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [child]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [child],
+    );
   }
 }
 
