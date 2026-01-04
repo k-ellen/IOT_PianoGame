@@ -12,7 +12,7 @@
 
 // ===== AUDIO =====
 #define SAMPLE_RATE 22050
-#define MAX_VOICES 8
+#define MAX_VOICES 6
 
 // ===== LED =====
 #define NUMPIXELS 126

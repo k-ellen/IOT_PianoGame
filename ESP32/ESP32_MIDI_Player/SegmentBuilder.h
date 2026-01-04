@@ -1,19 +1,17 @@
 #pragma once
-#include <Arduino.h>
 #include <stdint.h>
 
-// Keep ONE definition of Segment in the whole project
 struct Segment {
   uint64_t startTick;
-  uint64_t endTick;   // [start, end), endTick == -1 means "to EOF"
+  uint64_t endTick;
 };
 
-// Build segments by musical bars (measures).
-// barsPerSegment = how many bars per segment (2, 4, 8 are typical).
-// Returns number of segments written into outSegments.
+class MidiParser;
+
+// 🔥 CHANGE: accept MidiParser&, NOT path
 int buildSegmentsByBars(
-  const String& midiPath,
+  MidiParser& midi,
   Segment* outSegments,
   int maxSegments,
-  int barsPerSegment = 2
+  int barsPerSegment
 );

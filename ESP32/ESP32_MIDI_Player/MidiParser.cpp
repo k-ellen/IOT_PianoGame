@@ -3,20 +3,32 @@
 #include <string.h>
 
 // =======================
-// LOW-LEVEL READERS
+// LOW LEVEL READERS (each locks briefly)
 // =======================
 
 uint16_t MidiParser::readBE16() {
   SdGuard g;
-  return ((uint16_t)file.read() << 8) | file.read();
+  int a = file.read();
+  int b = file.read();
+  if (a < 0) a = 0;
+  if (b < 0) b = 0;
+  return ((uint16_t)a << 8) | (uint16_t)b;
 }
 
 uint32_t MidiParser::readBE32() {
   SdGuard g;
-  return ((uint32_t)file.read() << 24) |
-         ((uint32_t)file.read() << 16) |
-         ((uint32_t)file.read() << 8) |
-         file.read();
+  int a = file.read();
+  int b = file.read();
+  int c = file.read();
+  int d = file.read();
+  if (a < 0) a = 0;
+  if (b < 0) b = 0;
+  if (c < 0) c = 0;
+  if (d < 0) d = 0;
+  return ((uint32_t)a << 24) |
+         ((uint32_t)b << 16) |
+         ((uint32_t)c << 8)  |
+         (uint32_t)d;
 }
 
 uint32_t MidiParser::readVLQ() {
@@ -25,16 +37,20 @@ uint32_t MidiParser::readVLQ() {
   do {
     SdGuard g;
     c = file.read();
-    v = (v << 7) | (c & 0x7F);
+    if (c < 0) c = 0;
+    v = (v << 7) | (uint32_t)(c & 0x7F);
   } while (c & 0x80);
   return v;
 }
 
 // =======================
-// OPEN MIDI FILE
+// OPEN MIDI (NO NESTED LOCKS)
 // =======================
 
 bool MidiParser::open(const String& path) {
+  // Close any previous file
+  close();
+
   {
     SdGuard g;
     file = SD.open(path.c_str(), FILE_READ);
@@ -44,22 +60,29 @@ bool MidiParser::open(const String& path) {
   char hdr[4];
   {
     SdGuard g;
-    file.read((uint8_t*)hdr, 4);
+    if (file.read((uint8_t*)hdr, 4) != 4) {
+      file.close();
+      return false;
+    }
   }
-  if (memcmp(hdr, "MThd", 4) != 0) return false;
+  if (memcmp(hdr, "MThd", 4) != 0) {
+    close();
+    return false;
+  }
 
-  readBE32();            // header length
-  readBE16();            // format
-  numTracks = (uint8_t)readBE16();
+  (void)readBE32();                 // header length
+  (void)readBE16();                 // format
+  uint16_t nt = readBE16();         // numTracks
   division = readBE16();
   if (division == 0) division = 480;
 
-  if (numTracks > MAX_TRACKS) numTracks = MAX_TRACKS;
+  if (nt > MAX_TRACKS) nt = MAX_TRACKS;
+  numTracks = (uint8_t)nt;
 
   for (int i = 0; i < numTracks; i++) {
     {
       SdGuard g;
-      file.read((uint8_t*)hdr, 4); // MTrk
+      if (file.read((uint8_t*)hdr, 4) != 4) { close(); return false; } // "MTrk"
     }
     uint32_t len = readBE32();
 
@@ -85,11 +108,25 @@ bool MidiParser::open(const String& path) {
 }
 
 // =======================
-// PRELOAD NEXT EVENT PER TRACK
+// REWIND (RESET TRACKS)
+// =======================
+
+void MidiParser::rewind() {
+  for (int i = 0; i < numTracks; i++) {
+    tracks[i].curPos = tracks[i].startPos;
+    tracks[i].nextAbsTicks = 0;
+    tracks[i].runningStatus = 0;
+    tracks[i].ended = false;
+    preloadNext((uint8_t)i);
+  }
+}
+
+// =======================
+// PRELOAD NEXT EVENT PER TRACK (LOCK RAW SD CALLS ONLY)
 // =======================
 
 bool MidiParser::preloadNext(uint8_t i) {
-  TrackState &tr = tracks[i];
+  TrackState& tr = tracks[i];
   if (tr.ended || tr.curPos >= tr.endPos) {
     tr.ended = true;
     tr.nextEvent.type = MIDI_END;
@@ -100,20 +137,23 @@ bool MidiParser::preloadNext(uint8_t i) {
     SdGuard g;
     file.seek(tr.curPos);
   }
+
   tr.nextAbsTicks += readVLQ();
 
-  uint8_t status;
-  int peek;
+  int peekVal;
   {
     SdGuard g;
-    peek = file.peek();
+    peekVal = file.peek();
   }
 
-  if (peek < 0x80) {
+  uint8_t status;
+  if (peekVal < 0x80) {
     status = tr.runningStatus;
   } else {
     SdGuard g;
-    status = file.read();
+    int s = file.read();
+    if (s < 0) s = 0;
+    status = (uint8_t)s;
     tr.runningStatus = status;
   }
 
@@ -126,23 +166,22 @@ bool MidiParser::preloadNext(uint8_t i) {
 
   if (cmd == 0x90) {
     SdGuard g;
-    ev.note = file.read();
-    ev.velocity = file.read();
+    ev.note = (uint8_t)file.read();
+    ev.velocity = (uint8_t)file.read();
     ev.type = (ev.velocity == 0) ? MIDI_NOTE_OFF : MIDI_NOTE_ON;
   }
   else if (cmd == 0x80) {
     SdGuard g;
-    ev.note = file.read();
-    ev.velocity = file.read();
+    ev.note = (uint8_t)file.read();
+    ev.velocity = (uint8_t)file.read();
     ev.type = MIDI_NOTE_OFF;
   }
   else if (status == 0xFF) {
     ev.ch = 0;
-
     uint8_t metaType;
     {
       SdGuard g;
-      metaType = file.read();
+      metaType = (uint8_t)file.read();
     }
     uint32_t metaLen = readVLQ();
 
@@ -154,17 +193,16 @@ bool MidiParser::preloadNext(uint8_t i) {
       ev.type = MIDI_TEMPO;
       SdGuard g;
       ev.tempoUS = ((uint32_t)file.read() << 16) |
-                   ((uint32_t)file.read() << 8) |
-                   file.read();
+                   ((uint32_t)file.read() << 8)  |
+                   (uint32_t)file.read();
     }
     else if (metaType == 0x58 && metaLen == 4) {
-      // ✅ Time Signature: nn dd cc bb
       ev.type = MIDI_TIME_SIG;
       SdGuard g;
-      ev.tsNum = file.read();     // nn
-      ev.tsDenPow = file.read();  // dd (power of 2)
-      file.read();                // cc (ignore)
-      file.read();                // bb (ignore)
+      ev.tsNum = (uint8_t)file.read();
+      ev.tsDenPow = (uint8_t)file.read();
+      file.read(); // cc ignore
+      file.read(); // bb ignore
     }
     else {
       SdGuard g;

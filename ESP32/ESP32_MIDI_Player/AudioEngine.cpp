@@ -24,11 +24,11 @@ static portMUX_TYPE voicesMux = portMUX_INITIALIZER_UNLOCKED;
 // TUNABLES
 // =======================
 
-static constexpr int OUT_FRAMES = 256;          // frames per i2s_write
-static constexpr int VOICE_BUFS = 2;            // ping/pong
-static constexpr int BUF_SAMPLES = 1024;        // per buffer, mono int16 samples
+static constexpr int OUT_FRAMES  = 256;   // frames per i2s_write
+static constexpr int VOICE_BUFS  = 2;     // ping/pong
+static constexpr int BUF_SAMPLES = 1024;  // per buffer, mono int16 samples
 
-static float masterVolume = 2.2f;               // overall gain
+static float masterVolume = 1.4f;         // start sane; you can raise later
 static volatile uint32_t metroSamples = 0;
 
 // =======================
@@ -66,7 +66,7 @@ static inline float semitoneRate(int semitone) {
 }
 
 // =======================
-// VOICE (double-buffered, SD-loaded in background task)
+// VOICE
 // =======================
 
 struct Voice {
@@ -81,24 +81,60 @@ struct Voice {
   float playbackRate = 1.0f;
   float phase = 0.0f;           // fractional phase
 
-  // ping/pong buffers
   int16_t buf[VOICE_BUFS][BUF_SAMPLES];
-  int bufSamples[VOICE_BUFS] = {0, 0};   // valid samples in each buffer
-  bool bufReady[VOICE_BUFS] = {false, false};
-  bool bufLoading[VOICE_BUFS] = {false, false};
+  int  bufSamples[VOICE_BUFS]  = {0, 0};
+  bool bufReady[VOICE_BUFS]    = {false, false};
+  bool bufLoading[VOICE_BUFS]  = {false, false};
 
-  uint8_t curBuf = 0;           // which buffer we are reading from
-  int bufIndex = 0;             // integer index into curBuf
+  uint8_t curBuf = 0;
+  int bufIndex = 0;
 };
 
 static Voice voices[MAX_VOICES];
+
+// =======================
+// HARD CLOSE HELPERS (FIX FD LEAK)
+// =======================
+
+// Close and deactivate a voice safely (can be called from any task).
+static void voiceStopAndClose(int v) {
+  File toClose;
+
+  portENTER_CRITICAL(&voicesMux);
+  if (!voices[v].active) {
+    portEXIT_CRITICAL(&voicesMux);
+    return;
+  }
+
+  voices[v].active = false;
+  voices[v].eof = true;
+
+  // take ownership of the File object so we can close outside critical
+  toClose = voices[v].file;
+  voices[v].file = File();
+
+  // clear buffers so it won’t be used anymore
+  voices[v].bufReady[0] = voices[v].bufReady[1] = false;
+  voices[v].bufLoading[0] = voices[v].bufLoading[1] = false;
+  voices[v].bufSamples[0] = voices[v].bufSamples[1] = 0;
+  voices[v].bufIndex = 0;
+  voices[v].curBuf = 0;
+  voices[v].phase = 0.0f;
+
+  portEXIT_CRITICAL(&voicesMux);
+
+  // Now close outside critical, under SD lock
+  SdLock_take();
+  if (toClose) toClose.close();
+  SdLock_give();
+}
 
 // =======================
 // BACKGROUND LOADER TASK
 // =======================
 
 static void loaderFillBuffer(int v, int b) {
-  // Mark loading (short critical)
+  // mark loading (short critical)
   portENTER_CRITICAL(&voicesMux);
   if (!voices[v].active || voices[v].eof || voices[v].bufReady[b] || voices[v].bufLoading[b]) {
     portEXIT_CRITICAL(&voicesMux);
@@ -107,7 +143,7 @@ static void loaderFillBuffer(int v, int b) {
   voices[v].bufLoading[b] = true;
   portEXIT_CRITICAL(&voicesMux);
 
-  // Do SD read (can block) - NOT in critical, but under SdLock.
+  // SD read (can block) - NOT in critical, but under SdLock.
   int bytes = 0;
   SdLock_take();
   if (voices[v].file) {
@@ -115,12 +151,12 @@ static void loaderFillBuffer(int v, int b) {
   }
   SdLock_give();
 
-  // Commit results
+  // commit
   portENTER_CRITICAL(&voicesMux);
   voices[v].bufLoading[b] = false;
 
   if (!voices[v].active) {
-    // voice got turned off while we were reading
+    // voice was stopped while reading
     voices[v].bufReady[b] = false;
     voices[v].bufSamples[b] = 0;
     portEXIT_CRITICAL(&voicesMux);
@@ -128,6 +164,7 @@ static void loaderFillBuffer(int v, int b) {
   }
 
   if (bytes <= 0) {
+    // EOF or read error -> mark EOF; voice will be closed by audio task if no more audio
     voices[v].eof = true;
     voices[v].bufReady[b] = false;
     voices[v].bufSamples[b] = 0;
@@ -142,7 +179,6 @@ static void loaderFillBuffer(int v, int b) {
 
 static void loaderTask(void*) {
   while (true) {
-    // Scan voices and fill any missing buffer
     for (int v = 0; v < MAX_VOICES; v++) {
       bool act, eof;
       uint8_t cur;
@@ -158,20 +194,17 @@ static void loaderTask(void*) {
 
       if (!act || eof) continue;
 
-      // Prefer filling the "other" buffer first (so swap is seamless)
       int other = (cur ^ 1);
-      if (!(other ? r1 : r0)) loaderFillBuffer(v, other);
-      // Then fill current if somehow empty
-      if (!((cur == 0) ? r0 : r1)) loaderFillBuffer(v, cur);
+      if (!((other == 0) ? r0 : r1)) loaderFillBuffer(v, other);
+      if (!((cur   == 0) ? r0 : r1)) loaderFillBuffer(v, cur);
     }
 
-    // Small sleep - loader doesn't need to spin hard
     vTaskDelay(pdMS_TO_TICKS(2));
   }
 }
 
 // =======================
-// AUDIO TASK (REAL-TIME SAFE: NO SD ACCESS)
+// AUDIO TASK (NO SD ACCESS)
 // =======================
 
 static void audioTask(void*) {
@@ -182,29 +215,19 @@ static void audioTask(void*) {
       float mix = 0.0f;
 
       if (!audioMuted) {
-        // metronome takes priority
         if (metroSamples > 0) {
           mix = (metroSamples & 1) ? 0.9f : -0.9f;
           metroSamples--;
         } else if (currentMode == MODE_SONG_AUDIO) {
 
-          // Optional: simple auto-gain vs polyphony
-          int activeCount = 0;
-          for (int v = 0; v < MAX_VOICES; v++) {
-            portENTER_CRITICAL(&voicesMux);
-            bool a = voices[v].active;
-            portEXIT_CRITICAL(&voicesMux);
-            if (a) activeCount++;
-          }
-          // float polyGain = (activeCount <= 1) ? 1.0f : (1.0f / (0.7f * activeCount));
-          float polyGain = 0.6f;   // fixed, cheap, stable
-
+          // simple poly gain
+          float polyGain = 0.7f;
 
           for (int v = 0; v < MAX_VOICES; v++) {
-
-            // Snapshot minimal state
+            // Snapshot
             portENTER_CRITICAL(&voicesMux);
             bool active = voices[v].active;
+            bool eof = voices[v].eof;
             uint8_t curBuf = voices[v].curBuf;
             bool ready = voices[v].bufReady[curBuf];
             int nSamp = voices[v].bufSamples[curBuf];
@@ -214,47 +237,53 @@ static void audioTask(void*) {
             float vel = voices[v].velocity;
             portEXIT_CRITICAL(&voicesMux);
 
-            if (!active || !ready || nSamp <= 1) continue;
+            if (!active) continue;
 
-            // Bound check (if we ran out, mark buffer consumed and try swap)
+            // If nothing ready: if EOF -> stop+close NOW (fix FD leak)
+            if (!ready || nSamp <= 1) {
+              if (eof) {
+                voiceStopAndClose(v);
+              }
+              continue;
+            }
+
+            // buffer end: consume and try swap
             if (idx >= (nSamp - 1)) {
+              bool shouldClose = false;
+
               portENTER_CRITICAL(&voicesMux);
-              // consume current buffer
               voices[v].bufReady[curBuf] = false;
               voices[v].bufSamples[curBuf] = 0;
               voices[v].bufIndex = 0;
               voices[v].phase = 0.0f;
 
-              // swap if other ready
               uint8_t other = curBuf ^ 1;
               if (voices[v].bufReady[other] && voices[v].bufSamples[other] > 1) {
                 voices[v].curBuf = other;
               } else {
-                // no data ready yet -> silence this voice until loader fills (don’t kill it)
-                // If you prefer, you can stop it here, but silence is smoother.
+                // no data ready; if EOF, we should close
+                if (voices[v].eof) shouldClose = true;
               }
               portEXIT_CRITICAL(&voicesMux);
+
+              if (shouldClose) voiceStopAndClose(v);
               continue;
             }
 
-            // Fetch samples (linear interpolation)
+            // read samples (buffer memory stable while ready==true)
             int i0 = idx;
             int i1 = i0 + 1;
             if (i1 >= nSamp) i1 = i0;
 
-            // We must read the buffer contents WITHOUT critical; but buffer memory is stable
-            // while bufReady[curBuf]==true. We only set bufReady false when consumed.
             float s0 = (float)voices[v].buf[curBuf][i0];
             float s1 = (float)voices[v].buf[curBuf][i1];
             float sample = s0 + (s1 - s0) * phase;
 
-            // Advance phase/index
             phase += rate;
             int advance = (int)phase;
             phase -= advance;
             idx += advance;
 
-            // Commit updated indices (short critical)
             portENTER_CRITICAL(&voicesMux);
             if (voices[v].active && voices[v].curBuf == curBuf) {
               voices[v].phase = phase;
@@ -262,15 +291,14 @@ static void audioTask(void*) {
             }
             portEXIT_CRITICAL(&voicesMux);
 
-            // Mix (scale to [-1..1] domain)
-            mix += ((sample * 0.000045f) * vel) * polyGain;
+            // ✅ Correct scaling for 16-bit PCM
+            mix += (sample / 32768.0f) * vel * polyGain;
           }
         }
       }
 
       // master gain + soft saturation
       mix *= masterVolume;
-
       if (mix > 1.2f)  mix = 1.2f;
       if (mix < -1.2f) mix = -1.2f;
       mix = mix / (1.0f + fabsf(mix));
@@ -312,7 +340,6 @@ void Audio_init() {
   i2s_zero_dma_buffer(I2S_NUM_0);
   i2s_start(I2S_NUM_0);
 
-  // Audio must be higher priority than loader
   xTaskCreatePinnedToCore(audioTask, "audio", 8192, nullptr, 4, nullptr, 1);
   xTaskCreatePinnedToCore(loaderTask, "wav_loader", 4096, nullptr, 2, nullptr, 0);
 }
@@ -331,29 +358,9 @@ void Audio_triggerMetronome() {
 }
 
 void Audio_allNotesOff() {
-  // Turn off voices first
   for (int i = 0; i < MAX_VOICES; i++) {
-    bool closeMe = false;
-
-    portENTER_CRITICAL(&voicesMux);
-    closeMe = voices[i].active;
-    voices[i].active = false;
-    voices[i].eof = false;
-    voices[i].bufReady[0] = voices[i].bufReady[1] = false;
-    voices[i].bufLoading[0] = voices[i].bufLoading[1] = false;
-    voices[i].bufSamples[0] = voices[i].bufSamples[1] = 0;
-    voices[i].bufIndex = 0;
-    voices[i].curBuf = 0;
-    voices[i].phase = 0.0f;
-    portEXIT_CRITICAL(&voicesMux);
-
-    if (closeMe) {
-      SdLock_take();
-      if (voices[i].file) voices[i].file.close();
-      SdLock_give();
-    }
+    voiceStopAndClose(i);
   }
-
   metroSamples = 0;
 }
 
@@ -371,7 +378,7 @@ void Audio_noteOn(uint8_t note, uint8_t velocity) {
   portEXIT_CRITICAL(&voicesMux);
   if (slot < 0) return;
 
-  // Open file + seek data (SD can block, do it outside critical)
+  // Open WAV
   SdLock_take();
   File f = SD.open(smp->filename, FILE_READ);
   SdLock_give();
@@ -390,14 +397,13 @@ void Audio_noteOn(uint8_t note, uint8_t velocity) {
     return;
   }
 
-  // Initialize voice state
-  float v = velocity / 127.0f;
-  float vel = powf(v, 0.7f) * 1.4f;
+  float vv = velocity / 127.0f;
+  float vel = powf(vv, 0.7f) * 1.2f;
   int semitone = (int)note - (int)smp->midiRoot;
   float rate = semitoneRate(semitone);
 
   portENTER_CRITICAL(&voicesMux);
-  voices[slot] = Voice{};           // reset
+  voices[slot] = Voice{};
   voices[slot].file = f;
   voices[slot].active = true;
   voices[slot].eof = false;
@@ -409,7 +415,7 @@ void Audio_noteOn(uint8_t note, uint8_t velocity) {
   voices[slot].bufIndex = 0;
   portEXIT_CRITICAL(&voicesMux);
 
-  // Prefill BOTH buffers synchronously so chords start cleanly
+  // Prefill both buffers so chords start cleanly
   loaderFillBuffer(slot, 0);
   loaderFillBuffer(slot, 1);
 }
@@ -417,16 +423,11 @@ void Audio_noteOn(uint8_t note, uint8_t velocity) {
 void Audio_noteOff(uint8_t note) {
   for (int i = 0; i < MAX_VOICES; i++) {
     bool match = false;
-
     portENTER_CRITICAL(&voicesMux);
     match = (voices[i].active && voices[i].midiNote == note);
-    if (match) voices[i].active = false;
     portEXIT_CRITICAL(&voicesMux);
-
     if (match) {
-      SdLock_take();
-      if (voices[i].file) voices[i].file.close();
-      SdLock_give();
+      voiceStopAndClose(i);
     }
   }
 }
