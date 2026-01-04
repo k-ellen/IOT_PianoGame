@@ -10,3 +10,5 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath);
 bool FirebaseControl_downloadToSD(const String &remotePath,
                                   String &outLocalPath);
 void FirebaseControl_checkStop();
+
+void FirebaseControl_setStatus(const String &status);

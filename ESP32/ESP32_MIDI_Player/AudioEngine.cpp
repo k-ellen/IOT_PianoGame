@@ -408,7 +408,6 @@ void Audio_noteOn(uint8_t note, uint8_t velocity) {
   voices[slot].curBuf = 0;
   voices[slot].bufIndex = 0;
   portEXIT_CRITICAL(&voicesMux);
-
   // Prefill BOTH buffers synchronously so chords start cleanly
   loaderFillBuffer(slot, 0);
   loaderFillBuffer(slot, 1);
@@ -429,4 +428,79 @@ void Audio_noteOff(uint8_t note) {
       SdLock_give();
     }
   }
+}
+
+void Audio_playEffect(const char* filename) {
+  // if (audioMuted) return;
+  audioMuted = false;
+  Serial.printf("🔊 Attempting to play effect: %s\n", filename);
+
+  // 1. Find a free voice slot OR steal one
+  int slot = -1;
+  
+  portENTER_CRITICAL(&voicesMux);
+  // Try to find an empty slot first
+  for (int i = 0; i < MAX_VOICES; i++) {
+    if (!voices[i].active) { 
+      slot = i; 
+      break; 
+    }
+  }
+  
+  // If full, STEAL slot 0 (Priority override!)
+  if (slot < 0) {
+     slot = 0;
+     voices[0].active = false; // Kill the previous sound
+  }
+  portEXIT_CRITICAL(&voicesMux);
+
+  // 2. Safely close any previous file in this slot (Critical for stealing!)
+  SdLock_take();
+  if (voices[slot].file) {
+      voices[slot].file.close();
+  }
+  
+  // 3. Open the new file
+  File f = SD.open(filename, FILE_READ);
+  SdLock_give();
+  
+  if (!f) {
+    Serial.printf("❌ Error: File not found on SD: %s\n", filename);
+    return;
+  }
+
+  // 4. Find WAV data chunk
+  uint32_t dataStart = 0;
+  SdLock_take();
+  bool ok = wavSeekToData(f, dataStart);
+  if (ok) f.seek(dataStart);
+  SdLock_give();
+
+  if (!ok) {
+    Serial.printf("❌ Error: Invalid WAV format: %s\n", filename);
+    SdLock_take(); 
+    f.close(); 
+    SdLock_give();
+    return;
+  }
+
+  // 5. Configure the voice
+  portENTER_CRITICAL(&voicesMux);
+  voices[slot] = Voice{}; 
+  voices[slot].file = f;
+  voices[slot].active = true;
+  voices[slot].eof = false;
+  voices[slot].midiNote = 0;    
+  voices[slot].velocity = 10.0f; // BOOST VOLUME (2.0x) for feedback
+  voices[slot].playbackRate = 1.0f; 
+  voices[slot].phase = 0.0f;
+  voices[slot].curBuf = 0;
+  voices[slot].bufIndex = 0;
+  portEXIT_CRITICAL(&voicesMux);
+
+  // 6. Pre-load buffers immediately
+  loaderFillBuffer(slot, 0);
+  loaderFillBuffer(slot, 1);
+  
+  Serial.printf("✅ Effect playing in voice slot %d\n", slot);
 }
