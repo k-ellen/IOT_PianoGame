@@ -11,8 +11,8 @@
 #define I2S_WS    33
 
 // ===== AUDIO =====
-#define SAMPLE_RATE 48000
-#define MAX_VOICES 8
+#define SAMPLE_RATE 22050
+#define MAX_VOICES 6
 
 // ===== LED =====
 #define NUMPIXELS 126
