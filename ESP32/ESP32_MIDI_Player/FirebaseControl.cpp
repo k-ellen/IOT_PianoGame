@@ -75,6 +75,28 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
 
   outRemotePath = fbdo.stringData();
   outRemotePath.trim();
+
+  if (Firebase.RTDB.getFloat(&fbdo, "/esp32API/playCommand/speed")) {
+     float s = fbdo.floatData();
+     // Limit speed range (0.1x to 2.0x)
+     if (s >= 0.1 && s <= 2.0) playbackSpeed = s;
+     else playbackSpeed = 1.0; 
+  } else {
+     playbackSpeed = 1.0;
+  }
+  
+  // GET PLAY MODE (0 = Memorize/Interactive, 1 = Follow/Visual)
+  if (Firebase.RTDB.getInt(&fbdo, "/esp32API/playCommand/playMode")) {
+    int modeVal = fbdo.intData();
+    if (modeVal == 0) {
+      currentMode = MODE_FOLLOW; // Visual + Speed
+    } else {
+      currentMode = MODE_LEARN;  // Interactive + Normal Speed
+    }
+  } else {
+    currentMode = MODE_LEARN; // Default
+  }
+
   return true;
 }
 
@@ -114,5 +136,12 @@ void FirebaseControl_checkStop() {
       stopRequested = true;
       Serial.println("🛑 Stop command detected!");
     }
+  }
+}
+
+void FirebaseControl_setStatus(const String &status) {
+  if (Firebase.ready()) {
+    // Write to the same node the App listens to
+    Firebase.RTDB.setString(&fbdo, "/esp32API/playCommand/status", status);
   }
 }

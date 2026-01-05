@@ -5,7 +5,7 @@
 #include "LedEngine.h"
 #include "MidiParser.h"
 #include "FirebaseControl.h"
-#include "SegmentBuilder.h"   // ✅ NEW
+#include "SegmentBuilder.h"
 
 // Segment learning helpers
 static bool g_ignoreUserInput = false;
@@ -13,6 +13,9 @@ static bool g_segmentHadMistake = false;
 
 // Keep segments global/static (not stack)
 static Segment segments[MAX_SEGMENTS];
+
+// playback speed
+float playbackSpeed = 1.0f;
 
 // =======================
 // INTERACTIVE STATE
@@ -259,46 +262,135 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
 // =======================
 // MAIN ENTRY POINT
 // =======================
+// --- FOLLOW MODE (Visual Only, Speed Controlled) ---
+static void playVisualSong(const String& path) {
+  MidiParser midi;
+  if (!midi.open(path)) return;
 
-void Player_playSong(const String &path) {
-  Serial.println("📂 Building segments by BARS...");
+  Led_clear();
+  
+  uint32_t tempoUS = 500000;
+  uint16_t division = midi.getDivision();
+  
+  MidiEvent ev;
+  uint64_t absTicks = 0;
+  
+  // State tracking
+  uint64_t globalTicks = 0;
+  uint64_t startUS = micros();
+  uint64_t accumulatedDelayUS = 0; // Tracks the "stretched" time
 
-  // 2 bars per segment => more “musical sense”
-  int segmentCount = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 2);
+  Serial.printf("🚀 Starting Follow Mode at %.1fx speed\n", playbackSpeed);
 
-  if (segmentCount <= 0) {
-    Serial.println("❌ Segment build failed (could not open MIDI or parse).");
-    return;
+  bool haveEv = false;
+
+  while (!stopRequested) {
+    if (!haveEv) {
+      if (!midi.nextEvent(ev, absTicks)) break; // End of file
+      haveEv = true;
+    }
+
+    // Process Time Delta
+    uint64_t deltaTicks = absTicks - globalTicks;
+    
+    if (deltaTicks > 0) {
+      // 1. Calculate Standard Duration (at 1.0 speed)
+      uint64_t standardStepUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
+      
+      // 2. APPLY SPEED MATH
+      // Divide duration by speed (e.g., 2.0 speed = half duration)
+      uint64_t adjustedStepUS = (uint64_t)(standardStepUS / playbackSpeed);
+
+      accumulatedDelayUS += adjustedStepUS;
+      globalTicks = absTicks;
+
+      // 3. Wait loop (using the adjusted time)
+      while (!stopRequested && (int64_t)(startUS + accumulatedDelayUS - micros()) > 0) {
+        FirebaseControl_checkStop(); 
+        // Led_update(); // Keep LEDs refreshing
+        delay(1);
+      }
+    }
+
+    // Process Events
+    if (ev.type == MIDI_NOTE_ON) {
+      // Visual ONLY: No Audio call here
+      uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
+      Led_noteOn(ev.note, color);
+    } 
+    else if (ev.type == MIDI_NOTE_OFF) {
+      Led_noteOff(ev.note);
+    } 
+    else if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS;
+    }
+
+    haveEv = false; // Done with this event
+    // Led_update();   // Ensure immediate update
   }
 
-  Serial.printf("✅ Built %d bar-based segments.\n", segmentCount);
+  Led_clear();
+  midi.close();
+}
 
+void Player_playSong(const String &path) {
   stopRequested = false;
 
-  for (int s = 0; s < segmentCount && !stopRequested; s++) {
-    Serial.printf("▶ Learning Segment %d/%d\n", s + 1, segmentCount);
+  // 1. FOLLOW MODE (Firebase Mode 1)
+  // Visual only, Continuous, Respects 'playbackSpeed'
+  if (currentMode == MODE_FOLLOW) {
+    Serial.println("📂 Mode: FOLLOW (Visual + Speed)");
+    playVisualSong(path);
+  } 
+  
+  // 2. MEMORIZE MODE (Firebase Mode 0)
+  // Interactive, Bar-by-Bar, ALWAYS 1.0x Speed
+  else {
+    Serial.println("📂 Mode: MEMORIZE (Interactive)");
+    Serial.println("📂 Building segments by BARS...");
 
-    playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
-    if (stopRequested) break;
+    int segmentCount = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 2);
 
-    while (!stopRequested) {
-      practiceSegment(path, segments[s].startTick, segments[s].endTick);
-      if (stopRequested) break;
+    if (segmentCount <= 0) {
+      Serial.println("❌ Segment build failed.");
+      return;
+    }
+    
+    // Loop through segments
+    for (int s = 0; s < segmentCount && !stopRequested; s++) {
+        Serial.printf("▶ Learning Segment %d/%d\n", s + 1, segmentCount);
 
-      if (!g_segmentHadMistake) {
-        Serial.println("✨ Segment Cleared! Next...");
-        delay(500);
-        break;
-      }
+        // This runs at normal speed (logic unchanged)
+        playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
+        if (stopRequested) break;
+        
+        while (!stopRequested) {
+             practiceSegment(path, segments[s].startTick, segments[s].endTick);
+             if (stopRequested) break;
 
-      Serial.println("⚠️ Mistakes made. Replaying Demo...");
-      delay(500);
-      playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
+             if (!g_segmentHadMistake) {
+                 Serial.println("✨ Segment Cleared!");
+                //  Audio_playEffect("/feedback/continue.wav");
+                 delay(1500); 
+                 break;
+             }
+
+             Serial.println("⚠️ Mistakes made. Replaying...");
+            //  Audio_playEffect("/feedback/try_again.wav");
+             delay(1500); 
+             playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
+        }
     }
   }
 
+  // Common Cleanup
   Audio_allNotesOff();
   Led_clear();
   currentMode = MODE_FREE;
   Serial.println("🏁 Song finished!");
+
+  // If finished naturally, update App status
+  if (!stopRequested) {
+     FirebaseControl_setStatus("stopped");
+  }
 }
