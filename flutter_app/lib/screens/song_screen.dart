@@ -1,10 +1,7 @@
 import 'dart:async';
-
 import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction;
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart' as rtdb;
 import 'package:flutter/material.dart';
-
 import '../widgets/footer/bottom_navigation_bar.dart';
 import '../widgets/header/my_header.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -386,17 +383,17 @@ class _SongScreenState extends State<SongScreen> {
     }
   }
 
-  void _navigateToTab(int index) {
-    if (!mounted) return;
+void _navigateToTab(int index) {
+  if (!mounted) return;
 
-    if (index == 0) {
-      Navigator.pushReplacementNamed(context, "/home");
-    } else if (index == 1) {
-      Navigator.pushReplacementNamed(context, "/search");
-    } else if (index == 2) {
-      Navigator.pushReplacementNamed(context, "/upload");
-    }
+  if (index == 0) {
+    Navigator.pushReplacementNamed(context, "/search");
+  } else if (index == 1) {
+    Navigator.pushReplacementNamed(context, "/upload");
+  } else if (index == 2) {
+    Navigator.pushReplacementNamed(context, "/user");
   }
+}
 
   // ---------------- speed dialog ----------------
   Future<bool> _showChooseSpeedDialog() async {
@@ -599,38 +596,37 @@ Future<void> _onPlayStopPressed() async {
     return;
   }
 
-  // I am playing => Stop
-  if (_isPlayingMine) {
-    await sendPlaybackCommand(false, path);
-    await _clearOwnerFields();
-    await _disarmOnDisconnect();
-     final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        await StatsService(FirebaseFirestore.instance)
-            .updateLastPracticeDate(user.uid);
-      }
-    return;
-  }
+// I am playing => Stop
+if (_isPlayingMine) {
+  await sendPlaybackCommand(false, path);
+  await _clearOwnerFields();
+  await _disarmOnDisconnect();
 
-  // Start with lock
-  final bool ok = await _tryStartPlayingWithLock(path);
-  if (!ok) {
-    await _showSomeoneElsePlayingDialog();
-    return;
+  final u = FirebaseAuth.instance.currentUser;
+  if (u != null) {
+    await StatsService(FirebaseFirestore.instance).registerPracticeDay(u.uid);
   }
-
-  final user = FirebaseAuth.instance.currentUser;
-  if (user != null) {
-    await StatsService(FirebaseFirestore.instance).onStartSong(
-      uid: user.uid,
-      songId: widget.songId,
-    );
-  }
-
-  // I became owner => arm onDisconnect so if I crash/close, it stops
-  await _armOnDisconnectIfConnected();
+  return;
 }
 
+// Start with lock
+final bool ok = await _tryStartPlayingWithLock(path);
+if (!ok) {
+  await _showSomeoneElsePlayingDialog();
+  return;
+}
+
+final u = FirebaseAuth.instance.currentUser;
+if (u != null) {
+  await StatsService(FirebaseFirestore.instance).onStartSong(
+    uid: u.uid,
+    songId: widget.songId,
+  );
+}
+
+// I became owner => arm onDisconnect so if I crash/close, it stops
+await _armOnDisconnectIfConnected();
+}
   // ====================== UI ======================
   @override
   Widget build(BuildContext context) {
@@ -938,7 +934,7 @@ Future<void> _onPlayStopPressed() async {
           },
         ),
         bottomNavigationBar: MyBottomNavigationBar(
-          currentIndex: 1,
+          currentIndex: 0,
           onTap: _handleNavLeave,
         ),
       ),

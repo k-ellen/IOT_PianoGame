@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
-import '../../screens/home_screen.dart';
 import '../../screens/search_screen.dart';
 import '../../screens/upload_screen.dart';
-import '../../screens/stats_screen.dart';
+import '../../screens/user_screen.dart';
 
 class MyBottomNavigationBar extends StatelessWidget {
   final int currentIndex;
@@ -23,35 +22,32 @@ class MyBottomNavigationBar extends StatelessWidget {
       unselectedItemColor: Colors.grey,
       currentIndex: currentIndex,
       items: const [
-        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
         BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Search'),
         BottomNavigationBarItem(icon: Icon(Icons.cloud_upload), label: 'Upload'),
-        BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: 'Stats'),
+        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'User'),
       ],
       onTap: (index) {
         if (onTap != null) {
           onTap!(index);
           return;
         }
-        if (index == 0 && currentIndex != 0) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(builder: (context) => const HomeScreen()),
-          );
-        } else if (index == 1 && currentIndex != 1) {
+
+        if (index == currentIndex) return;
+
+        if (index == 0) {
           Navigator.pushReplacement(
             context,
             MaterialPageRoute(builder: (context) => const SearchScreen()),
           );
-        } else if (index == 2 && currentIndex != 2) {
+        } else if (index == 1) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => UploadScreen()),
+            MaterialPageRoute(builder: (context) => const UploadScreen()),
           );
-        } else if (index == 3 && currentIndex != 3) {
+        } else if (index == 2) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const StatsScreen()),
+            MaterialPageRoute(builder: (context) => const UserScreen()),
           );
         }
       },

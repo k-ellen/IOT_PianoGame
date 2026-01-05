@@ -4,7 +4,6 @@ import '../services/auth_service.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
-
 class SignUpScreen extends StatefulWidget {
   const SignUpScreen({super.key});
 
@@ -13,12 +12,25 @@ class SignUpScreen extends StatefulWidget {
 }
 
 class _SignUpScreenState extends State<SignUpScreen> {
+  final _firstNameController = TextEditingController();
+  final _lastNameController = TextEditingController();
+
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
 
   final _authService = AuthService();
   bool _isLoading = false;
+
+  @override
+  void dispose() {
+    _firstNameController.dispose();
+    _lastNameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,66 +41,40 @@ class _SignUpScreenState extends State<SignUpScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 25),
           child: Column(
             children: [
-              // HEADER AT TOP
               const MyHeader(title: 'Signup', isBackButton: true),
 
-              // CONTENT CENTERED
               Expanded(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const SizedBox(height: 100),
+                    const SizedBox(height: 80),
+
+                    _inputField(controller: _firstNameController, hint: 'First name'),
+                    const SizedBox(height: 30),
+
+                    _inputField(controller: _lastNameController, hint: 'Last name'),
+                    const SizedBox(height: 30),
 
                     _inputField(controller: _emailController, hint: 'Email'),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 30),
 
                     _inputField(
                       controller: _passwordController,
                       hint: 'Password',
                       obscure: true,
                     ),
-                    const SizedBox(height: 40),
+                    const SizedBox(height: 30),
 
                     _inputField(
                       controller: _confirmPasswordController,
                       hint: 'Confirm Password',
                       obscure: true,
                     ),
-                    const SizedBox(height: 70),
+                    const SizedBox(height: 60),
 
                     _primaryButton(
                       text: _isLoading ? 'Signing up...' : 'Signup',
-                      onTap: _isLoading
-                          ? () {}
-                          : () async {
-                              if (_passwordController.text !=
-                                  _confirmPasswordController.text) {
-                                _showError('Passwords do not match');
-                                return;
-                              }
-
-                              setState(() => _isLoading = true);
-
-                              try {
-                                await _authService.signUp(
-                                  email: _emailController.text.trim(),
-                                  password: _passwordController.text.trim(),
-                                );
-
-                                if (!mounted) return;
-                                Navigator.pushNamedAndRemoveUntil(context, '/search', (route) => false);
-
-                               
-                              } on FirebaseAuthException catch (e) {
-                                _showError(e.message ?? 'Signup failed');
-                              } catch (e, st) {
-                                debugPrint('SIGNUP ERROR: $e');
-                                debugPrint('$st');
-                                _showError(e.toString());
-                              } finally {
-                                if (mounted) setState(() => _isLoading = false);
-                              }
-                            },
+                      onTap: _isLoading ? () {} : _onSignupPressed,
                     ),
                   ],
                 ),
@@ -98,6 +84,46 @@ class _SignUpScreenState extends State<SignUpScreen> {
         ),
       ),
     );
+  }
+
+  Future<void> _onSignupPressed() async {
+    final firstName = _firstNameController.text.trim();
+    final lastName = _lastNameController.text.trim();
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
+    final confirmPassword = _confirmPasswordController.text.trim();
+
+    if (firstName.isEmpty || lastName.isEmpty) {
+      _showError('Please enter first and last name');
+      return;
+    }
+
+    if (password != confirmPassword) {
+      _showError('Passwords do not match');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      await _authService.signUp(
+        email: email,
+        password: password,
+        firstName: firstName,
+        lastName: lastName,
+      );
+
+      if (!mounted) return;
+      Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+    } on FirebaseAuthException catch (e) {
+      _showError(e.message ?? 'Signup failed');
+    } catch (e, st) {
+      debugPrint('SIGNUP ERROR: $e');
+      debugPrint('$st');
+      _showError(e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   Widget _inputField({

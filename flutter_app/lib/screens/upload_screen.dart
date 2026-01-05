@@ -228,7 +228,7 @@ class _UploadScreenState extends State<UploadScreen> {
         ),
       ),
 
-      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 2),
+      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 1),
     );
   }
 }

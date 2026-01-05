@@ -337,7 +337,7 @@ class _SearchScreenState extends State<SearchScreen> {
           ),
         ),
       ),
-      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 1),
+      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 0),
     );
   }
 

@@ -8,16 +8,39 @@ class AuthService {
   // =====================
   // SIGN UP
   // =====================
-  Future<void> signUp({required String email, required String password}) async {
+  Future<void> signUp({
+    required String email,
+    required String password,
+    required String firstName,
+    required String lastName,
+  }) async {
     final userCredential = await _auth.createUserWithEmailAndPassword(
       email: email,
       password: password,
     );
 
-    await _firestore.collection('users').doc(userCredential.user!.uid).set({
+    final user = userCredential.user;
+    if (user == null) {
+      throw FirebaseAuthException(
+        code: 'user-null',
+        message: 'User creation failed',
+      );
+    }
+
+    final fullName = '$firstName $lastName';
+
+    // (אופציונלי) לשמור גם ב-FirebaseAuth
+    await user.updateDisplayName(fullName);
+
+    // לשמור במסד
+    await _firestore.collection('users').doc(user.uid).set({
+      'uid': user.uid,
       'email': email,
+      'firstName': firstName,
+      'lastName': lastName,
+      'fullName': fullName,
       'createdAt': FieldValue.serverTimestamp(),
-    });
+    }, SetOptions(merge: true));
   }
 
   // =====================
@@ -28,7 +51,7 @@ class AuthService {
   }
 
   // =====================
-  // SIGN OUT (optional)
+  // SIGN OUT
   // =====================
   Future<void> signOut() async {
     await _auth.signOut();

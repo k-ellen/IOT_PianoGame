@@ -8,6 +8,7 @@ import 'screens/home_screen.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'screens/auth_gate.dart';
 import 'screens/stats_screen.dart';
+import 'screens/user_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -25,12 +26,11 @@ Widget build(BuildContext context) {
   title: 'Piano Teacher App',
   initialRoute: '/',
   routes: {
-    '/': (context) => const AuthGate(),
-    '/home': (context) => const HomeScreen(),
-    '/search': (context) => const SearchScreen(),
-    '/upload': (context) => const UploadScreen(),
-    '/stats': (context) => const StatsScreen(),
-  },
+  '/': (context) => const AuthGate(),
+  '/search': (context) => const SearchScreen(),
+  '/upload': (context) => const UploadScreen(),
+  '/user': (context) => const UserScreen(),
+},
 );
 }
 }
