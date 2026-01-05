@@ -131,7 +131,8 @@ class _UploadScreenState extends State<UploadScreen> {
     return Scaffold(
       backgroundColor: const Color(0xFF1E1E1E),
 
-      body: SingleChildScrollView(
+      body: SafeArea(
+      child: SingleChildScrollView(
         //allows scrolling of all content if there is not enough height
         child: Padding(
           padding: const EdgeInsets.all(16.0), //adds space around all content.
@@ -226,6 +227,7 @@ class _UploadScreenState extends State<UploadScreen> {
             ],
           ),
         ),
+      ),
       ),
 
       bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 1),
