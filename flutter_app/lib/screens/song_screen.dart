@@ -1,14 +1,18 @@
 import 'dart:async';
-import 'package:cloud_firestore/cloud_firestore.dart' hide Transaction;
+
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_database/firebase_database.dart' as rtdb;
 import 'package:flutter/material.dart';
+
 import '../widgets/footer/bottom_navigation_bar.dart';
 import '../widgets/header/my_header.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../services/stats_service.dart';
 
-enum _PlayMode { memorize, follow }
+// =====================
+// Modes
+// =====================
+enum _PlayMode { memorize, follow, simon }
 enum _HandsChoice { oneHand, twoHands }
 
 class SongScreen extends StatefulWidget {
@@ -66,13 +70,13 @@ class _SongScreenState extends State<SongScreen> {
   _HandsChoice _handsChoice = _HandsChoice.oneHand;
 
   // Keep latest Firestore difficulties so we can recompute storage path on-demand.
-  Map<String, dynamic> _lastDiffs = {};
+  Map<String, dynamic> _lastDiffs = <String, dynamic>{};
   String _currentStoragePath = '';
 
   // ----------- options -----------
   bool _metronomeOn = false;
   double _chosenSpeed = 1.0; // 0.1..2.0
-  _PlayMode _mode = _PlayMode.memorize;
+  _PlayMode? _mode;
 
   bool _didInitHandsChoiceFromInitial = false;
 
@@ -87,13 +91,9 @@ class _SongScreenState extends State<SongScreen> {
     _playRef = rtdb.FirebaseDatabase.instance.ref("esp32API/playCommand");
     _connectedRef = rtdb.FirebaseDatabase.instance.ref(".info/connected");
 
-    // Only for connection awareness (do NOT arm onDisconnect here!)
+    // Connection awareness only
     _connSub = _connectedRef.onValue.listen((event) {
-      final bool connected = (event.snapshot.value as bool?) ?? false;
-      if (!connected) {
-        // If we lost connection, the server might later run onDisconnect if armed.
-        // We keep this flag only as awareness; we re-arm on each successful start anyway.
-      }
+      // no-op; kept for future use
     });
 
     // Listen play status + owner fields
@@ -120,15 +120,12 @@ class _SongScreenState extends State<SongScreen> {
 
   // ================= OnDisconnect (ONLY for owner) =================
   Future<void> _armOnDisconnectIfConnected() async {
-    // Arm only when we are the owner (call this only after start success)
     final rtdb.DataSnapshot snap = await _connectedRef.get();
     final bool connected = (snap.value as bool?) ?? false;
     if (!connected) return;
 
     _onDisconnect ??= _playRef.onDisconnect();
 
-    // IMPORTANT: this will run if THIS client disconnects unexpectedly.
-    // We assume we arm it ONLY when this client is the current owner.
     await _onDisconnect!.update({
       "status": "stopped",
       "ownerUid": "",
@@ -140,7 +137,6 @@ class _SongScreenState extends State<SongScreen> {
   }
 
   Future<void> _disarmOnDisconnect() async {
-    // Cancel pending onDisconnect so it won't stop after we already stopped/left.
     await _onDisconnect?.cancel();
     _onDisconnect = null;
   }
@@ -190,7 +186,12 @@ class _SongScreenState extends State<SongScreen> {
     return 'UNKNOWN';
   }
 
-  int _playModeToInt(_PlayMode m) => (m == _PlayMode.follow) ? 0 : 1;
+  int _playModeToInt(_PlayMode? m) {
+  if (m == null) return -1; 
+  if (m == _PlayMode.follow) return 0;
+  if (m == _PlayMode.memorize) return 1;
+  return 2; // simon
+}
 
   // ---------------- RTDB commands ----------------
   Future<void> sendPlaybackCommand(bool play, String path) async {
@@ -213,6 +214,8 @@ class _SongScreenState extends State<SongScreen> {
       "status": play ? "playing" : "stopped",
       "metronome": _metronomeOn,
       "speed": _chosenSpeed,
+      // optional debug string:
+      "uiMode": _mode?.name ?? "",
     });
   }
 
@@ -259,6 +262,9 @@ class _SongScreenState extends State<SongScreen> {
       data["ownerSongId"] = widget.songId;
       data["ownerSongTitle"] = widget.title;
       data["startedAt"] = DateTime.now().millisecondsSinceEpoch;
+
+      // optional debug string:
+      data["uiMode"] = _mode?.name ?? "";
 
       return rtdb.Transaction.success(data);
     });
@@ -374,7 +380,6 @@ class _SongScreenState extends State<SongScreen> {
 
   // ---------------- navigation ----------------
   Future<void> _handleNavLeave(int index) async {
-    // Only if *I* am playing do we block exit
     if (_isPlayingMine) {
       _pendingNavIndex = index;
       await _showExitDialog();
@@ -383,17 +388,17 @@ class _SongScreenState extends State<SongScreen> {
     }
   }
 
-void _navigateToTab(int index) {
-  if (!mounted) return;
+  void _navigateToTab(int index) {
+    if (!mounted) return;
 
-  if (index == 0) {
-    Navigator.pushReplacementNamed(context, "/search");
-  } else if (index == 1) {
-    Navigator.pushReplacementNamed(context, "/upload");
-  } else if (index == 2) {
-    Navigator.pushReplacementNamed(context, "/user");
+    if (index == 0) {
+      Navigator.pushReplacementNamed(context, "/search");
+    } else if (index == 1) {
+      Navigator.pushReplacementNamed(context, "/upload");
+    } else if (index == 2) {
+      Navigator.pushReplacementNamed(context, "/user");
+    }
   }
-}
 
   // ---------------- speed dialog ----------------
   Future<bool> _showChooseSpeedDialog() async {
@@ -475,9 +480,9 @@ void _navigateToTab(int index) {
 
     for (final String rawDiffKey in candidateRawDiffKeys) {
       final Map<String, dynamic> diffObj =
-          diffs[rawDiffKey] as Map<String, dynamic>? ?? {};
+          diffs[rawDiffKey] as Map<String, dynamic>? ?? <String, dynamic>{};
       final Map<String, dynamic> handsObj =
-          diffObj['hands'] as Map<String, dynamic>? ?? {};
+          diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
 
       for (final entry in handsObj.entries) {
         final String rawHandKey = entry.key.toString();
@@ -485,7 +490,7 @@ void _navigateToTab(int index) {
         if (_isUnknownValue(handLabel)) continue;
 
         final Map<String, dynamic> handObj =
-            entry.value as Map<String, dynamic>? ?? {};
+            entry.value as Map<String, dynamic>? ?? <String, dynamic>{};
         final String p = (handObj['storagePath'] as String?) ?? '';
         if (p.isEmpty) continue;
 
@@ -511,7 +516,6 @@ void _navigateToTab(int index) {
 
   // ---------------- change settings while playing ----------------
   Future<void> _attemptChangeWhilePlaying(void Function() applyChange) async {
-    // If I'm not the owner, never stop someone else's song.
     if (!_isPlayingMine) {
       setState(() {
         applyChange();
@@ -535,45 +539,63 @@ void _navigateToTab(int index) {
     });
   }
 
-  // ---------------- memorize/follow ----------------
-  Future<void> _onSelectFollow() async {
-    if (_isPlayingMine) {
-      final bool stopOk = await _showStopBeforeChangeDialog();
-      if (!stopOk) return;
+  // ---------------- play/stop ----------------
+  Future<void> _onPlayStopPressed() async {
+    if (_mode == null) return;
+    _recomputeStoragePath();
+    final String path = _currentStoragePath;
+    if (path.isEmpty) return;
 
-      await sendPlaybackCommand(false, _currentStoragePath);
-      await _clearOwnerFields();
-      await _disarmOnDisconnect();
-      if (!mounted) return;
-
-      setState(() {
-        _mode = _PlayMode.follow;
-        _chosenSpeed = 1.0;
-      });
-
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text("Song stopped. Tap Follow Song again to choose speed"),
-            duration: Duration(seconds: 4),
-          ),
-        );
-
+    if (_someoneElsePlaying) {
+      await _showSomeoneElsePlayingDialog();
       return;
     }
 
-    final bool ok = await _showChooseSpeedDialog();
-    if (!ok) return;
-    if (!mounted) return;
+    if (_isPlayingMine) {
+      await sendPlaybackCommand(false, path);
+      await _clearOwnerFields();
+      await _disarmOnDisconnect();
 
-    setState(() => _mode = _PlayMode.follow);
+      final User? u = FirebaseAuth.instance.currentUser;
+      if (u != null) {
+        await StatsService(FirebaseFirestore.instance).registerPracticeDay(u.uid);
+      }
+      return;
+    }
+
+    final bool ok = await _tryStartPlayingWithLock(path);
+    if (!ok) {
+      await _showSomeoneElsePlayingDialog();
+      return;
+    }
+
+    final User? u = FirebaseAuth.instance.currentUser;
+    if (u != null) {
+      await StatsService(FirebaseFirestore.instance).onStartSong(
+        uid: u.uid,
+        songId: widget.songId,
+      );
+    }
+
+    await _armOnDisconnectIfConnected();
   }
 
-  Future<void> _onSelectMemorize() async {
+  // =====================
+  // NEW: 3 green circles (mode + play)
+  // =====================
+  Future<void> _onModeCirclePressed(_PlayMode m) async {
+    // if someone else playing => just show dialog
+    if (_someoneElsePlaying) {
+      await _showSomeoneElsePlayingDialog();
+      return;
+    }
+
+    // If I'm currently playing, keep current behavior: stop (single place to stop)
+    // But we still allow changing mode for the next run (after stop)
     if (_isPlayingMine) {
-      final bool stopOk = await _showStopBeforeChangeDialog();
-      if (!stopOk) return;
+      // optional: ask stop before changing mode
+      final bool ok = await _showStopBeforeChangeDialog();
+      if (!ok) return;
 
       await sendPlaybackCommand(false, _currentStoragePath);
       await _clearOwnerFields();
@@ -581,52 +603,33 @@ void _navigateToTab(int index) {
       if (!mounted) return;
     }
 
-    setState(() => _mode = _PlayMode.memorize);
+    // set mode + update RTDB immediately
+    if (!mounted) return;
+    setState(() => _mode = m);
+
+    // Follow mode: ask speed before play
+    if (m == _PlayMode.follow) {
+      final bool ok = await _showChooseSpeedDialog();
+      if (!ok) return;
+      if (!mounted) return;
+      setState(() => _mode = _PlayMode.follow);
+    } else {
+      // default speed for memorize/simon (you can change if needed)
+      setState(() => _chosenSpeed = 1.0);
+    }
+
+    // Update RTDB "realtime" as requested (even before play)
+    await _playRef.update({
+      "playMode": _playModeToInt(_mode),
+    "uiMode": _mode?.name ?? "",
+      "metronome": _metronomeOn,
+      "speed": _chosenSpeed,
+    });
+
+    // Start playing immediately (because it's a PLAY circle)
+    await _onPlayStopPressed();
   }
 
-// ---------------- play/stop button ----------------
-Future<void> _onPlayStopPressed() async {
-  _recomputeStoragePath();
-  final String path = _currentStoragePath;
-  if (path.isEmpty) return;
-
-  // Someone else playing => button stays "Learn Song", click shows dialog
-  if (_someoneElsePlaying) {
-    await _showSomeoneElsePlayingDialog();
-    return;
-  }
-
-// I am playing => Stop
-if (_isPlayingMine) {
-  await sendPlaybackCommand(false, path);
-  await _clearOwnerFields();
-  await _disarmOnDisconnect();
-
-  final u = FirebaseAuth.instance.currentUser;
-  if (u != null) {
-    await StatsService(FirebaseFirestore.instance).registerPracticeDay(u.uid);
-  }
-  return;
-}
-
-// Start with lock
-final bool ok = await _tryStartPlayingWithLock(path);
-if (!ok) {
-  await _showSomeoneElsePlayingDialog();
-  return;
-}
-
-final u = FirebaseAuth.instance.currentUser;
-if (u != null) {
-  await StatsService(FirebaseFirestore.instance).onStartSong(
-    uid: u.uid,
-    songId: widget.songId,
-  );
-}
-
-// I became owner => arm onDisconnect so if I crash/close, it stops
-await _armOnDisconnectIfConnected();
-}
   // ====================== UI ======================
   @override
   Widget build(BuildContext context) {
@@ -674,14 +677,14 @@ await _armOnDisconnectIfConnected();
             }
 
             final Map<String, dynamic> data =
-                snap.data!.data() as Map<String, dynamic>? ?? {};
+                snap.data!.data() as Map<String, dynamic>? ?? <String, dynamic>{};
             final Map<String, dynamic> diffs =
-                data['difficulties'] as Map<String, dynamic>? ?? {};
+                data['difficulties'] as Map<String, dynamic>? ?? <String, dynamic>{};
 
             _lastDiffs = diffs;
 
             // Build map: label -> raw keys
-            final Map<String, List<String>> rawKeysByDiffLabel = {};
+            final Map<String, List<String>> rawKeysByDiffLabel = <String, List<String>>{};
             final List<String> unknownRawDiffKeys = <String>[];
 
             for (final entry in diffs.entries) {
@@ -696,10 +699,8 @@ await _armOnDisconnectIfConnected();
               }
             }
 
-            final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()
-              ..sort();
+            final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()..sort();
 
-            // If no known labels, but we do have UNKNOWN entries -> allow UNKNOWN
             if (diffLabels.isEmpty && unknownRawDiffKeys.isNotEmpty) {
               rawKeysByDiffLabel['UNKNOWN'] = unknownRawDiffKeys;
               diffLabels.add('UNKNOWN');
@@ -722,14 +723,13 @@ await _armOnDisconnectIfConnected();
             bool hasTwoHands = false;
 
             _HandsChoice? initialChoiceFound;
-            final String initialHandsClean =
-                _cleanHandsLabel(widget.initialHands);
+            final String initialHandsClean = _cleanHandsLabel(widget.initialHands);
 
             for (final String rawDiffKey in selectedRawDiffKeys) {
               final Map<String, dynamic> diffObj =
-                  diffs[rawDiffKey] as Map<String, dynamic>? ?? {};
+                  diffs[rawDiffKey] as Map<String, dynamic>? ?? <String, dynamic>{};
               final Map<String, dynamic> handsObj =
-                  diffObj['hands'] as Map<String, dynamic>? ?? {};
+                  diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
 
               for (final entry in handsObj.entries) {
                 final String rawHandKey = entry.key.toString();
@@ -745,8 +745,7 @@ await _armOnDisconnectIfConnected();
                 if (!_didInitHandsChoiceFromInitial) {
                   if (initialHandsClean == 'BOTH' && handLabel == 'BOTH') {
                     initialChoiceFound = _HandsChoice.twoHands;
-                  } else if ((initialHandsClean == 'RIGHT' ||
-                          initialHandsClean == 'LEFT') &&
+                  } else if ((initialHandsClean == 'RIGHT' || initialHandsClean == 'LEFT') &&
                       (handLabel == 'RIGHT' || handLabel == 'LEFT')) {
                     initialChoiceFound = _HandsChoice.oneHand;
                   }
@@ -761,9 +760,8 @@ await _armOnDisconnectIfConnected();
                 _handsChoice = initialChoiceFound!;
               } else {
                 if (showHandsSelector) {
-                  _handsChoice = (initialHandsClean == 'BOTH')
-                      ? _HandsChoice.twoHands
-                      : _HandsChoice.oneHand;
+                  _handsChoice =
+                      (initialHandsClean == 'BOTH') ? _HandsChoice.twoHands : _HandsChoice.oneHand;
                 } else if (hasTwoHands && !hasOneHand) {
                   _handsChoice = _HandsChoice.twoHands;
                 } else if (hasOneHand && !hasTwoHands) {
@@ -774,18 +772,13 @@ await _armOnDisconnectIfConnected();
             }
 
             if (!showHandsSelector) {
-              if (hasTwoHands && !hasOneHand) {
-                _handsChoice = _HandsChoice.twoHands;
-              }
-              if (hasOneHand && !hasTwoHands) {
-                _handsChoice = _HandsChoice.oneHand;
-              }
+              if (hasTwoHands && !hasOneHand) _handsChoice = _HandsChoice.twoHands;
+              if (hasOneHand && !hasTwoHands) _handsChoice = _HandsChoice.oneHand;
             }
 
             _recomputeStoragePath();
             final bool canPlay = _currentStoragePath.isNotEmpty;
-
-            final bool isPlayingMine = _isPlayingMine;
+            final bool circlesEnabled = canPlay && !_someoneElsePlaying;
 
             final double screenHeight = MediaQuery.of(context).size.height;
             final double screenWidth = MediaQuery.of(context).size.width;
@@ -804,11 +797,7 @@ await _armOnDisconnectIfConnected();
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Center(
-                      child: Icon(
-                        Icons.music_note,
-                        size: 112,
-                        color: Colors.black,
-                      ),
+                      child: Icon(Icons.music_note, size: 112, color: Colors.black),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -837,6 +826,7 @@ await _armOnDisconnectIfConnected();
                     ),
                   ),
                   const SizedBox(height: 30),
+
                   if (showDifficultySelector || showHandsSelector) ...[
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -857,8 +847,7 @@ await _armOnDisconnectIfConnected();
                               ),
                             ),
                           ),
-                        if (showDifficultySelector && showHandsSelector)
-                          const SizedBox(width: 12),
+                        if (showDifficultySelector && showHandsSelector) const SizedBox(width: 12),
                         if (showHandsSelector)
                           Expanded(
                             child: _LabeledBox(
@@ -877,6 +866,7 @@ await _armOnDisconnectIfConnected();
                     ),
                     const SizedBox(height: 12),
                   ],
+
                   Row(
                     children: [
                       const SizedBox(
@@ -897,36 +887,38 @@ await _armOnDisconnectIfConnected();
                       ),
                     ],
                   ),
+
+                  const SizedBox(height: 18),
+
+                  // =========================
+                  // NEW: 3 green circles
+                  // =========================
+
+                  Opacity(
+                    opacity: circlesEnabled ? 1.0 : 0.45,
+                    child: IgnorePointer(
+                      ignoring: !circlesEnabled,
+                      child: _ModeCirclesRow(
+                        selected: _mode,
+                        isPlayingMine: _isPlayingMine,
+                        onMemorize: () => _onModeCirclePressed(_PlayMode.memorize),
+                        onFollow: () => _onModeCirclePressed(_PlayMode.follow),
+                        onSimon: () => _onModeCirclePressed(_PlayMode.simon),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 14),
-                  _SegmentedAction(
-                    leftText: "Memorize Song",
-                    rightText: "Follow Song",
-                    selected: _mode == _PlayMode.follow ? 1 : 0,
-                    onLeft: _onSelectMemorize,
-                    onRight: _onSelectFollow,
-                  ),
-                  const SizedBox(height: 90),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isPlayingMine
-                          ? Colors.redAccent
-                          : (canPlay ? Colors.green : Colors.grey),
-                      foregroundColor: Colors.black,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      minimumSize: const Size.fromHeight(50),
-                    ),
-                    onPressed: canPlay ? _onPlayStopPressed : null,
-                    child: Text(
-                      isPlayingMine ? "Stop Song" : "Learn Song",
-                      style: const TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
+
+                  if (_someoneElsePlaying)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: Text(
+                        'Playing now: ${_ownerName.isEmpty ? "Someone" : _ownerName}',
+                        style: const TextStyle(color: Colors.white70),
+                        textAlign: TextAlign.center,
                       ),
                     ),
-                  ),
+
                   const SizedBox(height: 10),
                 ],
               ),
@@ -939,6 +931,131 @@ await _armOnDisconnectIfConnected();
         ),
       ),
     );
+  }
+}
+
+// =====================
+// NEW circles widget
+// =====================
+class _ModeCirclesRow extends StatelessWidget {
+  const _ModeCirclesRow({
+    required this.selected,
+    required this.isPlayingMine,
+    required this.onMemorize,
+    required this.onFollow,
+    required this.onSimon,
+  });
+
+  final _PlayMode? selected;
+  final bool isPlayingMine;
+
+  final VoidCallback onMemorize;
+  final VoidCallback onFollow;
+  final VoidCallback onSimon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Expanded(
+          child: _GreenModeCircle(
+            title: "Memorize\nSong",
+            selected: selected == _PlayMode.memorize,
+            isPlayingMine: isPlayingMine && selected == _PlayMode.memorize,
+            onTap: onMemorize,
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: _GreenModeCircle(
+            title: "Follow\nSong",
+            selected: selected == _PlayMode.follow,
+            isPlayingMine: isPlayingMine && selected == _PlayMode.follow,
+            onTap: onFollow,
+          ),
+        ),
+        const SizedBox(width: 14),
+        Expanded(
+          child: _GreenModeCircle(
+            title: "Simon\nSong",
+            selected: selected == _PlayMode.simon,
+            isPlayingMine: isPlayingMine && selected == _PlayMode.simon,
+            onTap: onSimon,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _GreenModeCircle extends StatelessWidget {
+  const _GreenModeCircle({
+    required this.title,
+    required this.selected,
+    required this.isPlayingMine,
+    required this.onTap,
+  });
+
+  final String title;
+  final bool selected;
+  final bool isPlayingMine;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color fill = selected ? const Color(0xFF00C853) : const Color(0xFF2E7D32);
+    final Color border = selected ? Colors.white : Colors.transparent;
+
+   return Center(
+  child: SizedBox(
+    width: 120,   // <-- גודל עיגול (תשני למה שבא לך: 110/130 וכו')
+    height: 120,
+    child: InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: fill,
+          border: Border.all(color: border, width: 2),
+          boxShadow: [
+            BoxShadow(
+              blurRadius: 18,
+              offset: const Offset(0, 10),
+              color: Colors.black.withOpacity(0.35),
+            )
+          ],
+        ),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                isPlayingMine ? Icons.stop_circle : Icons.play_circle_fill,
+                color: Colors.black,
+                size: 44, // <-- היה 34
+              ),
+              const SizedBox(height: 8),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 14, // <-- היה 12
+                  height: 1.1,  // <-- קצת יותר מרווח
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
   }
 }
 
@@ -1093,73 +1210,6 @@ class _HandsOneVsTwoPicker extends StatelessWidget {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SegmentedAction extends StatelessWidget {
-  final String leftText;
-  final String rightText;
-  final int selected; // 0 left, 1 right
-  final Future<void> Function() onLeft;
-  final Future<void> Function() onRight;
-
-  const _SegmentedAction({
-    required this.leftText,
-    required this.rightText,
-    required this.selected,
-    required this.onLeft,
-    required this.onRight,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => onLeft(),
-              child: _segBtn(text: leftText, isSelected: selected == 0),
-            ),
-          ),
-          Expanded(
-            child: InkWell(
-              borderRadius: BorderRadius.circular(14),
-              onTap: () => onRight(),
-              child: _segBtn(text: rightText, isSelected: selected == 1),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _segBtn({required String text, required bool isSelected}) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 160),
-      padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        color: isSelected ? Colors.blueAccent : Colors.transparent,
-      ),
-      child: Center(
-        child: Text(
-          text,
-          style: TextStyle(
-            color: isSelected ? Colors.black : Colors.white,
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-          ),
-          overflow: TextOverflow.ellipsis,
         ),
       ),
     );

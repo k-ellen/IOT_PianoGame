@@ -1,16 +1,23 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import '../widgets/header/my_header.dart';
 import '../widgets/footer/bottom_navigation_bar.dart';
 import '../services/auth_service.dart';
-
 
 class UserScreen extends StatelessWidget {
   const UserScreen({super.key});
 
-  // ===== Dark + Blue palette =====
-  static const Color _bgDark = Color(0xFF0E0F14);
+  static const LinearGradient _bgGradient = LinearGradient(
+  begin: Alignment.topCenter,
+  end: Alignment.bottomCenter,
+  colors: [
+    Color(0xFFB3E5FC), // תכלת בהיר
+    Color(0xFF1E88E5), // כחול
+    Color(0xFF0D1B3D), // כחול כהה מאוד
+  ],
+);
+
+  // ===== Cards/UI palette =====
   static const Color _cardDark = Color(0xFF161823);
   static const Color _borderDark = Color(0xFF23263A);
   static const Color _blueAccent = Color(0xFF4DA3FF);
@@ -40,19 +47,13 @@ class UserScreen extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text(
-              'Cancel',
-              style: TextStyle(color: _textSecondary),
-            ),
+            child: const Text('Cancel', style: TextStyle(color: _textSecondary)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text(
               'Log out',
-              style: TextStyle(
-                color: _blueAccent,
-                fontWeight: FontWeight.w800,
-              ),
+              style: TextStyle(color: _blueAccent, fontWeight: FontWeight.w800),
             ),
           ),
         ],
@@ -83,7 +84,6 @@ class UserScreen extends StatelessWidget {
   String _formatSeconds(int totalSeconds) {
     final int minutes = totalSeconds ~/ 60;
     final int hours = minutes ~/ 60;
-
     final int remMinutes = minutes % 60;
     final int remSeconds = totalSeconds % 60;
 
@@ -96,10 +96,14 @@ class UserScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      return const Scaffold(
-        backgroundColor: _bgDark,
-        body: Center(
-          child: Text('Not signed in', style: TextStyle(color: Colors.white)),
+      return Scaffold(
+        body: Container(
+          decoration: const BoxDecoration(gradient: _bgGradient),
+          child: const SafeArea(
+            child: Center(
+              child: Text('Not signed in', style: TextStyle(color: Colors.white)),
+            ),
+          ),
         ),
       );
     }
@@ -108,136 +112,138 @@ class UserScreen extends StatelessWidget {
     final statsRef = userRef.collection('stats').doc('general');
 
     return Scaffold(
-      backgroundColor: _bgDark,
-   
-      body: SafeArea(
-  child: Column(
-    children: [
-      Padding(
-  padding: const EdgeInsets.all(16.0),
-  child: Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      const Text(
-        'User',
-        style: TextStyle(
-          color: Colors.white,
-          fontSize: 32,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
-
-      Column(
-        children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(12),
-            child: Image.asset(
-              'assets/images/logo.png',
-              width: 40,
-              height: 40,
-              fit: BoxFit.cover,
-            ),
-          ),
-          const SizedBox(height: 6),
-
-          IconButton(
-          icon: const Icon(
-            Icons.logout,
-            color: UserScreen._blueAccent,
-            size: 26, 
-          ),
-          padding: EdgeInsets.zero,
-          constraints: const BoxConstraints(), 
-          onPressed: () => _confirmLogout(context),
-        ),
-        ],
-      ),
-    ],
-  ),
-),
-
-      const SizedBox(height: 10),
-
-      Expanded(
-        child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: statsRef.snapshots(),
-          builder: (context, statsSnap) {
-            if (!statsSnap.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            final stats = statsSnap.data!.data() ?? <String, dynamic>{};
-
-            final int totalPracticeSeconds = _toInt(stats['totalPracticeSeconds']);
-            final int totalPlaysCount = _toInt(stats['totalPlaysCount']);
-            final int currentStreakDays = _toInt(stats['currentStreakDays']);
-
-            final String lastPracticeDate = _toStr(stats['lastPracticeDate']);
-            final String lastPlayedSongId = _toStr(stats['lastPlayedSongId']);
-
-            final int learnedSongsCount = _toInt(stats['learnedSongsCount']);
-            final int hardLearnedSongsCount = _toInt(stats['hardLearnedSongsCount']);
-
-            return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-              future: userRef.get(),
-              builder: (context, userSnap) {
-                final userData = userSnap.data?.data() ?? <String, dynamic>{};
-                final String firstName = _toStr(userData['firstName']);
-                final String lastName = _toStr(userData['lastName']);
-
-                final String displayName =
-                    (firstName.trim().isEmpty && lastName.trim().isEmpty)
-                        ? (user.email ?? 'User')
-                        : '${firstName.trim()} ${lastName.trim()}';
-
-                return SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      _TopHeader(
-                        displayName: displayName,
-                        subtitle: (user.email ?? '').trim(),
-                        learnedSongsCount: learnedSongsCount,
-                        currentStreakDays: currentStreakDays,
-                        hardLearnedSongsCount: hardLearnedSongsCount,
-                        totalPlaysCount: totalPlaysCount,
-                      ),
-                      const SizedBox(height: 24),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                        child: Column(
-                          children: [
-                            _DarkStatCard(
-                              title: 'Total practice time',
-                              value: _formatSeconds(totalPracticeSeconds),
-                              icon: Icons.timer_outlined,
-                            ),
-                            const SizedBox(height: 12),
-                            _DarkStatCard(
-                              title: 'Last practice date',
-                              value: lastPracticeDate.trim().isEmpty ? '-' : lastPracticeDate,
-                              icon: Icons.calendar_today_outlined,
-                            ),
-                            const SizedBox(height: 12),
-                            _DarkStatCard(
-                              title: 'Last played song',
-                              value: lastPlayedSongId.trim().isEmpty ? '-' : lastPlayedSongId,
-                              icon: Icons.music_note_outlined,
-                            ),
-                          ],
+      // ✅ ONE background for the whole page
+      body: Container(
+        decoration: const BoxDecoration(gradient: _bgGradient),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // ===== TOP BAR =====
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Row(
+                      children: [
+                        const Text(
+                          'User',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontSize: 32,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(
+                            Icons.logout,
+                            color: Colors.black,
+                            size: 30,
+                          ),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          tooltip: 'Log out',
+                          onPressed: () => _confirmLogout(context),
+                        ),
+                      ],
+                    ),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.asset(
+                        'assets/images/logo.png',
+                        width: 40,
+                        height: 40,
+                        fit: BoxFit.cover,
                       ),
-                    ],
-                  ),
-                );
-              },
-            );
-          },
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 4),
+
+              Expanded(
+                child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                  stream: statsRef.snapshots(),
+                  builder: (context, statsSnap) {
+                    if (!statsSnap.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final stats = statsSnap.data!.data() ?? <String, dynamic>{};
+
+                    final int totalPracticeSeconds = _toInt(stats['totalPracticeSeconds']);
+                    final int totalPlaysCount = _toInt(stats['totalPlaysCount']);
+                    final int currentStreakDays = _toInt(stats['currentStreakDays']);
+
+                    final String lastPracticeDate = _toStr(stats['lastPracticeDate']);
+                    final String lastPlayedSongId = _toStr(stats['lastPlayedSongId']);
+
+                    final int learnedSongsCount = _toInt(stats['learnedSongsCount']);
+                    final int hardLearnedSongsCount = _toInt(stats['hardLearnedSongsCount']);
+
+                    return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                      future: userRef.get(),
+                      builder: (context, userSnap) {
+                        final userData = userSnap.data?.data() ?? <String, dynamic>{};
+                        final String firstName = _toStr(userData['firstName']);
+                        final String lastName = _toStr(userData['lastName']);
+
+                        final String displayName =
+                            (firstName.trim().isEmpty && lastName.trim().isEmpty)
+                                ? (user.email ?? 'User')
+                                : '${firstName.trim()} ${lastName.trim()}';
+
+                        return SingleChildScrollView(
+                          child: Column(
+                            children: [
+                              _TopHeader(
+                                displayName: displayName,
+                                 subtitle: '',
+                                learnedSongsCount: learnedSongsCount,
+                                currentStreakDays: currentStreakDays,
+                                hardLearnedSongsCount: hardLearnedSongsCount,
+                                totalPlaysCount: totalPlaysCount,
+                              ),
+                              const SizedBox(height: 24),
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                                child: Column(
+                                  children: [
+                                    _DarkStatCard(
+                                      title: 'Total practice time',
+                                      value: _formatSeconds(totalPracticeSeconds),
+                                      icon: Icons.timer_outlined,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    _DarkStatCard(
+                                      title: 'Last practice date',
+                                      value: lastPracticeDate.trim().isEmpty ? '-' : lastPracticeDate,
+                                      icon: Icons.calendar_today_outlined,
+                                    ),
+                                    const SizedBox(height: 12),
+                                    _DarkStatCard(
+                                      title: 'Last played song',
+                                      value: lastPlayedSongId.trim().isEmpty ? '-' : lastPlayedSongId,
+                                      icon: Icons.music_note_outlined,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
-    ],
-  ),
-),
 
       bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 2),
     );
@@ -245,7 +251,7 @@ class UserScreen extends StatelessWidget {
 }
 
 // =====================
-// TOP HEADER (Gradient stops at end of first card + fixed avatar position)
+// TOP HEADER (NO background / NO gradient here!)
 // =====================
 class _TopHeader extends StatelessWidget {
   const _TopHeader({
@@ -254,7 +260,7 @@ class _TopHeader extends StatelessWidget {
     required this.learnedSongsCount,
     required this.currentStreakDays,
     required this.hardLearnedSongsCount,
-     required this.totalPlaysCount,
+    required this.totalPlaysCount,
   });
 
   final String displayName;
@@ -264,7 +270,6 @@ class _TopHeader extends StatelessWidget {
   final int hardLearnedSongsCount;
   final int totalPlaysCount;
 
-  static const Color _bgDark = UserScreen._bgDark;
   static const Color _cardDark = UserScreen._cardDark;
   static const Color _borderDark = UserScreen._borderDark;
   static const Color _blueAccent = UserScreen._blueAccent;
@@ -276,13 +281,9 @@ class _TopHeader extends StatelessWidget {
     const double headerTopHeight = 170;
     const double avatarSize = 84;
 
-
-    const double estimatedCardHeight = 200; 
-    final double gradientHeight = headerTopHeight + (estimatedCardHeight / 2);
-
+    const double estimatedCardHeight = 200;
     final double cardTop = headerTopHeight - (estimatedCardHeight / 2);
     final double avatarTop = cardTop - (avatarSize / 2);
-
     final double totalHeaderHeight = headerTopHeight + (estimatedCardHeight / 2) + 20;
 
     return SizedBox(
@@ -290,27 +291,10 @@ class _TopHeader extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          Container(
+          // ✅ Spacer only: lets the page gradient show behind it
+          SizedBox(
             width: double.infinity,
-            height: gradientHeight,
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF2A4C8F),
-                  Color(0xFF11162A),
-                  _bgDark,
-                ],
-              ),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.only(left: 8, top: 8),
-              child: Align(
-                alignment: Alignment.topLeft,
-               
-              ),
-            ),
+            height: headerTopHeight + (estimatedCardHeight / 2),
           ),
 
           Positioned(
@@ -332,7 +316,7 @@ class _TopHeader extends StatelessWidget {
                 ],
               ),
               child: Column(
-                mainAxisSize: MainAxisSize.min, 
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
                     displayName,
@@ -346,41 +330,37 @@ class _TopHeader extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(height: 6),
-
-
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: _textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 18),
-
                   Row(
-                  children: [
-                    Expanded(
-                      child: _TopMiniStatDark(
-                        label: 'Plays',
-                        value: '$totalPlaysCount',
+                    children: [
+                      Expanded(
+                        child: _TopMiniStatDark(label: 'Played', value: '$totalPlaysCount'),
                       ),
-                    ),
-                    _divider(),
-                    Expanded(
-                      child: _TopMiniStatDark(
-                        label: 'Streak',
-                        value: '$currentStreakDays',
+                      _divider(),
+                      Expanded(
+                        child: _TopMiniStatDark(label: 'Streak', value: '$currentStreakDays'),
                       ),
-                    ),
-                    _divider(),
-                    Expanded(
-                      child: _TopMiniStatDark(
-                        label: 'Hard',
-                        value: '$hardLearnedSongsCount',
+                      _divider(),
+                      Expanded(
+                        child: _TopMiniStatDark(label: 'Hard', value: '$hardLearnedSongsCount'),
                       ),
-                    ),
-                  ],
-                ),
-
+                    ],
+                  ),
                 ],
               ),
             ),
           ),
 
-          // Avatar on top of the card
           Positioned(
             top: avatarTop,
             left: 0,
@@ -391,7 +371,7 @@ class _TopHeader extends StatelessWidget {
                 height: avatarSize,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: _bgDark,
+                  color: _cardDark,
                   border: Border.all(color: _borderDark, width: 2),
                   boxShadow: [
                     BoxShadow(
@@ -428,7 +408,6 @@ class _TopHeader extends StatelessWidget {
   }
 }
 
-
 class _TopMiniStatDark extends StatelessWidget {
   const _TopMiniStatDark({required this.label, required this.value});
 
@@ -444,7 +423,7 @@ class _TopMiniStatDark extends StatelessWidget {
         Text(
           value,
           style: const TextStyle(
-            fontSize: 18,
+            fontSize: 24,
             fontWeight: FontWeight.w800,
             color: Colors.white,
           ),
@@ -453,7 +432,7 @@ class _TopMiniStatDark extends StatelessWidget {
         Text(
           label,
           style: const TextStyle(
-            fontSize: 12,
+            fontSize: 16,
             color: _textSecondary,
             fontWeight: FontWeight.w600,
           ),
