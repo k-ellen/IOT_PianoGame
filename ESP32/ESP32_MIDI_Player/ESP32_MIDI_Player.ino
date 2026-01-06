@@ -147,6 +147,8 @@ void setup() {
   initMidiIn();
 
   Serial.println("🎹 Ready (FREE PLAY)");
+
+  // Led_animateStartup();
 }
 
 // =======================

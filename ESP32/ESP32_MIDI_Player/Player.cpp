@@ -16,6 +16,7 @@ static Segment segments[MAX_SEGMENTS];
 
 // playback speed
 float playbackSpeed = 1.0f;
+bool g_metronomeEnabled = true;
 
 // =======================
 // INTERACTIVE STATE
@@ -269,52 +270,71 @@ static void playVisualSong(const String& path) {
 
   Led_clear();
   
-  uint32_t tempoUS = 500000;
-  uint16_t division = midi.getDivision();
+  // 1. Time Tracking Variables
+  uint32_t tempoUS = 500000; // Default 120 BPM
+  uint16_t division = midi.getDivision(); 
   
   MidiEvent ev;
   uint64_t absTicks = 0;
-  
-  // State tracking
   uint64_t globalTicks = 0;
   uint64_t startUS = micros();
-  uint64_t accumulatedDelayUS = 0; // Tracks the "stretched" time
+  uint64_t accumulatedDelayUS = 0; 
 
-  Serial.printf("🚀 Starting Follow Mode at %.1fx speed\n", playbackSpeed);
+  // 2. METRONOME SETUP
+  bool localMetronomeEnabled = true; // Set to 'false' if you want it off by default
+  double beatIntervalUS = tempoUS / playbackSpeed; 
+  double nextBeatTime = micros(); 
+
+  Serial.printf("🚀 Follow Mode: Speed %.1fx | Metronome: ON\n", playbackSpeed);
 
   bool haveEv = false;
 
   while (!stopRequested) {
     if (!haveEv) {
-      if (!midi.nextEvent(ev, absTicks)) break; // End of file
+      if (!midi.nextEvent(ev, absTicks)) break; 
       haveEv = true;
     }
 
-    // Process Time Delta
     uint64_t deltaTicks = absTicks - globalTicks;
     
     if (deltaTicks > 0) {
-      // 1. Calculate Standard Duration (at 1.0 speed)
       uint64_t standardStepUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
-      
-      // 2. APPLY SPEED MATH
-      // Divide duration by speed (e.g., 2.0 speed = half duration)
       uint64_t adjustedStepUS = (uint64_t)(standardStepUS / playbackSpeed);
 
       accumulatedDelayUS += adjustedStepUS;
       globalTicks = absTicks;
 
-      // 3. Wait loop (using the adjusted time)
+      // ---------------------------------------------------------
+      // ✅ THIS IS THE CRITICAL WAIT LOOP
+      // The metronome call MUST go inside here.
+      // ---------------------------------------------------------
       while (!stopRequested && (int64_t)(startUS + accumulatedDelayUS - micros()) > 0) {
+        
+        // 1. Check if it is time for a Metronome Click
+        if (localMetronomeEnabled && micros() >= nextBeatTime) {
+           
+           // >>>>> HERE IS THE CALL <<<<<
+           Audio_triggerMetronome(); 
+           // >>>>>>>>>>>>>>>>>>>>>>>>>>>
+           
+           // Calculate when the next beat should happen
+           beatIntervalUS = (double)tempoUS / playbackSpeed;
+           nextBeatTime += beatIntervalUS;
+           
+           // Safety: If we lagged behind, catch up to current time
+           if (micros() > nextBeatTime + beatIntervalUS) {
+             nextBeatTime = micros() + beatIntervalUS;
+           }
+        }
+
+        // 2. Standard Checks
         FirebaseControl_checkStop(); 
-        // Led_update(); // Keep LEDs refreshing
-        delay(1);
+        delay(1); // Short delay to prevent crashing
       }
     }
 
-    // Process Events
+    // Process MIDI Events
     if (ev.type == MIDI_NOTE_ON) {
-      // Visual ONLY: No Audio call here
       uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
       Led_noteOn(ev.note, color);
     } 
@@ -323,10 +343,11 @@ static void playVisualSong(const String& path) {
     } 
     else if (ev.type == MIDI_TEMPO) {
       tempoUS = ev.tempoUS;
+      // Important: Update metronome speed immediately when tempo changes
+      beatIntervalUS = (double)tempoUS / playbackSpeed; 
     }
 
-    haveEv = false; // Done with this event
-    // Led_update();   // Ensure immediate update
+    haveEv = false;
   }
 
   Led_clear();
