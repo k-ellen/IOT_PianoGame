@@ -75,8 +75,9 @@ class _SongScreenState extends State<SongScreen> {
 
   // ----------- options -----------
   bool _metronomeOn = false;
-  double _chosenSpeed = 1.0; // 0.1..2.0
-  _PlayMode? _mode;
+  double _chosenSpeed = 1.0; // 0.1..2.0 step 0.1
+  int _segments = 1; // 1..4
+  _PlayMode? _mode; // selected mode for circles
 
   bool _didInitHandsChoiceFromInitial = false;
 
@@ -91,10 +92,7 @@ class _SongScreenState extends State<SongScreen> {
     _playRef = rtdb.FirebaseDatabase.instance.ref("esp32API/playCommand");
     _connectedRef = rtdb.FirebaseDatabase.instance.ref(".info/connected");
 
-    // Connection awareness only
-    _connSub = _connectedRef.onValue.listen((event) {
-      // no-op; kept for future use
-    });
+    _connSub = _connectedRef.onValue.listen((event) {});
 
     // Listen play status + owner fields
     _playSub = _playRef.onValue.listen((event) {
@@ -125,7 +123,6 @@ class _SongScreenState extends State<SongScreen> {
     if (!connected) return;
 
     _onDisconnect ??= _playRef.onDisconnect();
-
     await _onDisconnect!.update({
       "status": "stopped",
       "ownerUid": "",
@@ -179,19 +176,17 @@ class _SongScreenState extends State<SongScreen> {
         u.contains('L&R')) {
       return 'BOTH';
     }
-
     if (u == 'L' || u == 'LH' || u.contains('LEFT')) return 'LEFT';
     if (u == 'R' || u == 'RH' || u.contains('RIGHT')) return 'RIGHT';
-
     return 'UNKNOWN';
   }
 
   int _playModeToInt(_PlayMode? m) {
-  if (m == null) return -1; 
-  if (m == _PlayMode.follow) return 0;
-  if (m == _PlayMode.memorize) return 1;
-  return 2; // simon
-}
+    if (m == null) return -1;
+    if (m == _PlayMode.follow) return 0;
+    if (m == _PlayMode.memorize) return 1;
+    return 2; // simon
+  }
 
   // ---------------- RTDB commands ----------------
   Future<void> sendPlaybackCommand(bool play, String path) async {
@@ -214,7 +209,7 @@ class _SongScreenState extends State<SongScreen> {
       "status": play ? "playing" : "stopped",
       "metronome": _metronomeOn,
       "speed": _chosenSpeed,
-      // optional debug string:
+      "segments": _segments,
       "uiMode": _mode?.name ?? "",
     });
   }
@@ -255,6 +250,7 @@ class _SongScreenState extends State<SongScreen> {
       data["status"] = "playing";
       data["metronome"] = _metronomeOn;
       data["speed"] = _chosenSpeed;
+      data["segments"] = _segments;
 
       // owner fields
       data["ownerUid"] = _myUid;
@@ -378,29 +374,6 @@ class _SongScreenState extends State<SongScreen> {
     return stop == true;
   }
 
-  // ---------------- navigation ----------------
-  Future<void> _handleNavLeave(int index) async {
-    if (_isPlayingMine) {
-      _pendingNavIndex = index;
-      await _showExitDialog();
-    } else {
-      _navigateToTab(index);
-    }
-  }
-
-  void _navigateToTab(int index) {
-    if (!mounted) return;
-
-    if (index == 0) {
-      Navigator.pushReplacementNamed(context, "/search");
-    } else if (index == 1) {
-      Navigator.pushReplacementNamed(context, "/upload");
-    } else if (index == 2) {
-      Navigator.pushReplacementNamed(context, "/user");
-    }
-  }
-
-  // ---------------- speed dialog ----------------
   Future<bool> _showChooseSpeedDialog() async {
     double tempSpeed = _chosenSpeed.clamp(0.1, 2.0);
 
@@ -455,6 +428,145 @@ class _SongScreenState extends State<SongScreen> {
     return ok == true;
   }
 
+  Future<bool> _showChooseSegmentsDialog() async {
+    int temp = _segments.clamp(1, 4);
+
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+        title: const Text(
+          "Choose segments:",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: StatefulBuilder(
+          builder: (context, setLocal) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    onPressed: temp > 1 ? () => setLocal(() => temp--) : null,
+                    icon: const Icon(Icons.remove, color: Colors.white),
+                  ),
+                  Text(
+                    "$temp",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: temp < 4 ? () => setLocal(() => temp++) : null,
+                    icon: const Icon(Icons.add, color: Colors.white),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text("1 to 4", style: TextStyle(color: Colors.white70)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white)),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _segments = temp);
+              Navigator.pop(context, true);
+            },
+            child: const Text("OK", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    return ok == true;
+  }
+
+Future<void> _showMetronomeDialog() async {
+  bool localOn = _metronomeOn;
+
+  final bool? ok = await showDialog<bool>(
+    context: context,
+    barrierDismissible: true,
+    builder: (context) {
+      return StatefulBuilder(
+        builder: (context, setLocal) {
+          return AlertDialog(
+            backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+            title: const Text(
+              "Metronome",
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+            ),
+            content: SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: localOn,
+              onChanged: (v) => setLocal(() => localOn = v),
+              activeColor: Colors.blueAccent,
+              title: const Text(
+                "Enable metronome",
+                style: TextStyle(color: Colors.white),
+              ),
+              subtitle: Text(
+                localOn ? "On" : "Off",
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel", style: TextStyle(color: Colors.white)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("OK", style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+
+  if (ok == true) {
+    setState(() => _metronomeOn = localOn);
+
+    // עדכון RTDB
+    await _playRef.update({
+      "metronome": _metronomeOn,
+    });
+  }
+}
+
+
+  // ---------------- navigation ----------------
+  Future<void> _handleNavLeave(int index) async {
+    if (_isPlayingMine) {
+      _pendingNavIndex = index;
+      await _showExitDialog();
+    } else {
+      _navigateToTab(index);
+    }
+  }
+
+  void _navigateToTab(int index) {
+    if (!mounted) return;
+
+    if (index == 0) {
+      Navigator.pushReplacementNamed(context, "/search");
+    } else if (index == 1) {
+      Navigator.pushReplacementNamed(context, "/upload");
+    } else if (index == 2) {
+      Navigator.pushReplacementNamed(context, "/user");
+    }
+  }
+
   // ---------------- recompute storage path ----------------
   void _recomputeStoragePath() {
     final Map<String, dynamic> diffs = _lastDiffs;
@@ -501,13 +613,11 @@ class _SongScreenState extends State<SongScreen> {
           bestPath = p;
           break;
         }
-
         if (!wantTwo && !isTwo) {
           bestPath = p;
           break;
         }
       }
-
       if (bestPath.isNotEmpty) break;
     }
 
@@ -542,6 +652,7 @@ class _SongScreenState extends State<SongScreen> {
   // ---------------- play/stop ----------------
   Future<void> _onPlayStopPressed() async {
     if (_mode == null) return;
+
     _recomputeStoragePath();
     final String path = _currentStoragePath;
     if (path.isEmpty) return;
@@ -558,7 +669,8 @@ class _SongScreenState extends State<SongScreen> {
 
       final User? u = FirebaseAuth.instance.currentUser;
       if (u != null) {
-        await StatsService(FirebaseFirestore.instance).registerPracticeDay(u.uid);
+        await StatsService(FirebaseFirestore.instance)
+            .registerPracticeDay(u.uid);
       }
       return;
     }
@@ -581,19 +693,14 @@ class _SongScreenState extends State<SongScreen> {
   }
 
   // =====================
-  // NEW: 3 green circles (mode + play)
+  // Circles: mode + play
   // =====================
   Future<void> _onModeCirclePressed(_PlayMode m) async {
-    // if someone else playing => just show dialog
-    if (_someoneElsePlaying) {
-      await _showSomeoneElsePlayingDialog();
-      return;
-    }
+    // here circles are disabled in UI when someone else plays,
+    // but keep this guard anyway
+    if (_someoneElsePlaying) return;
 
-    // If I'm currently playing, keep current behavior: stop (single place to stop)
-    // But we still allow changing mode for the next run (after stop)
     if (_isPlayingMine) {
-      // optional: ask stop before changing mode
       final bool ok = await _showStopBeforeChangeDialog();
       if (!ok) return;
 
@@ -603,34 +710,24 @@ class _SongScreenState extends State<SongScreen> {
       if (!mounted) return;
     }
 
-    // set mode + update RTDB immediately
     if (!mounted) return;
     setState(() => _mode = m);
 
-    // Follow mode: ask speed before play
-    if (m == _PlayMode.follow) {
-      final bool ok = await _showChooseSpeedDialog();
-      if (!ok) return;
-      if (!mounted) return;
-      setState(() => _mode = _PlayMode.follow);
-    } else {
-      // default speed for memorize/simon (you can change if needed)
-      setState(() => _chosenSpeed = 1.0);
-    }
-
-    // Update RTDB "realtime" as requested (even before play)
+    // no more "choose speed" here (speed is chosen from the Speed button)
     await _playRef.update({
       "playMode": _playModeToInt(_mode),
-    "uiMode": _mode?.name ?? "",
+      "uiMode": _mode?.name ?? "",
       "metronome": _metronomeOn,
       "speed": _chosenSpeed,
+      "segments": _segments,
     });
 
-    // Start playing immediately (because it's a PLAY circle)
     await _onPlayStopPressed();
   }
 
-  // ====================== UI ======================
+  // ======================
+  // UI
+  // ======================
   @override
   Widget build(BuildContext context) {
     final double topPad = MediaQuery.of(context).padding.top;
@@ -677,14 +774,17 @@ class _SongScreenState extends State<SongScreen> {
             }
 
             final Map<String, dynamic> data =
-                snap.data!.data() as Map<String, dynamic>? ?? <String, dynamic>{};
+                snap.data!.data() as Map<String, dynamic>? ??
+                    <String, dynamic>{};
             final Map<String, dynamic> diffs =
-                data['difficulties'] as Map<String, dynamic>? ?? <String, dynamic>{};
+                data['difficulties'] as Map<String, dynamic>? ??
+                    <String, dynamic>{};
 
             _lastDiffs = diffs;
 
             // Build map: label -> raw keys
-            final Map<String, List<String>> rawKeysByDiffLabel = <String, List<String>>{};
+            final Map<String, List<String>> rawKeysByDiffLabel =
+                <String, List<String>>{};
             final List<String> unknownRawDiffKeys = <String>[];
 
             for (final entry in diffs.entries) {
@@ -699,7 +799,8 @@ class _SongScreenState extends State<SongScreen> {
               }
             }
 
-            final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()..sort();
+            final List<String> diffLabels =
+                rawKeysByDiffLabel.keys.toList()..sort();
 
             if (diffLabels.isEmpty && unknownRawDiffKeys.isNotEmpty) {
               rawKeysByDiffLabel['UNKNOWN'] = unknownRawDiffKeys;
@@ -727,9 +828,11 @@ class _SongScreenState extends State<SongScreen> {
 
             for (final String rawDiffKey in selectedRawDiffKeys) {
               final Map<String, dynamic> diffObj =
-                  diffs[rawDiffKey] as Map<String, dynamic>? ?? <String, dynamic>{};
+                  diffs[rawDiffKey] as Map<String, dynamic>? ??
+                      <String, dynamic>{};
               final Map<String, dynamic> handsObj =
-                  diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
+                  diffObj['hands'] as Map<String, dynamic>? ??
+                      <String, dynamic>{};
 
               for (final entry in handsObj.entries) {
                 final String rawHandKey = entry.key.toString();
@@ -745,7 +848,8 @@ class _SongScreenState extends State<SongScreen> {
                 if (!_didInitHandsChoiceFromInitial) {
                   if (initialHandsClean == 'BOTH' && handLabel == 'BOTH') {
                     initialChoiceFound = _HandsChoice.twoHands;
-                  } else if ((initialHandsClean == 'RIGHT' || initialHandsClean == 'LEFT') &&
+                  } else if ((initialHandsClean == 'RIGHT' ||
+                          initialHandsClean == 'LEFT') &&
                       (handLabel == 'RIGHT' || handLabel == 'LEFT')) {
                     initialChoiceFound = _HandsChoice.oneHand;
                   }
@@ -760,8 +864,9 @@ class _SongScreenState extends State<SongScreen> {
                 _handsChoice = initialChoiceFound!;
               } else {
                 if (showHandsSelector) {
-                  _handsChoice =
-                      (initialHandsClean == 'BOTH') ? _HandsChoice.twoHands : _HandsChoice.oneHand;
+                  _handsChoice = (initialHandsClean == 'BOTH')
+                      ? _HandsChoice.twoHands
+                      : _HandsChoice.oneHand;
                 } else if (hasTwoHands && !hasOneHand) {
                   _handsChoice = _HandsChoice.twoHands;
                 } else if (hasOneHand && !hasTwoHands) {
@@ -778,6 +883,7 @@ class _SongScreenState extends State<SongScreen> {
 
             _recomputeStoragePath();
             final bool canPlay = _currentStoragePath.isNotEmpty;
+
             final bool circlesEnabled = canPlay && !_someoneElsePlaying;
 
             final double screenHeight = MediaQuery.of(context).size.height;
@@ -786,7 +892,7 @@ class _SongScreenState extends State<SongScreen> {
             final double coverWidth = screenWidth * 0.6;
 
             return SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
               child: Column(
                 children: [
                   Container(
@@ -797,7 +903,8 @@ class _SongScreenState extends State<SongScreen> {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Center(
-                      child: Icon(Icons.music_note, size: 112, color: Colors.black),
+                      child: Icon(Icons.music_note,
+                          size: 112, color: Colors.black),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -825,75 +932,88 @@ class _SongScreenState extends State<SongScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 30),
+                  const SizedBox(height: 22),
 
-                  if (showDifficultySelector || showHandsSelector) ...[
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        if (showDifficultySelector)
-                          Expanded(
-                            child: _LabeledBox(
-                              label: "Difficulty:",
-                              child: _DarkDropdown(
-                                value: _selectedDifficulty,
-                                items: diffLabels,
-                                onChanged: (v) {
-                                  _attemptChangeWhilePlaying(() {
-                                    _selectedDifficulty = v;
-                                    _didInitHandsChoiceFromInitial = false;
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
-                        if (showDifficultySelector && showHandsSelector) const SizedBox(width: 12),
-                        if (showHandsSelector)
-                          Expanded(
-                            child: _LabeledBox(
-                              label: "Hands:",
-                              child: _HandsOneVsTwoPicker(
-                                value: _handsChoice,
-                                onChanged: (v) {
-                                  _attemptChangeWhilePlaying(() {
-                                    _handsChoice = v;
-                                  });
-                                },
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-
-                  Row(
-                    children: [
-                      const SizedBox(
-                        width: 110,
-                        child: Text(
-                          "Metronome:",
-                          style: TextStyle(color: Colors.white, fontSize: 16),
-                        ),
-                      ),
-                      Switch(
-                        value: _metronomeOn,
+                  // Difficulty dropdown (same behavior as now)
+                  if (showDifficultySelector) ...[
+                    _LabeledBox(
+                      label: "Difficulty:",
+                      child: _DarkDropdown(
+                        value: _selectedDifficulty,
+                        items: diffLabels,
                         onChanged: (v) {
                           _attemptChangeWhilePlaying(() {
-                            _metronomeOn = v;
+                            _selectedDifficulty = v;
+                            _didInitHandsChoiceFromInitial = false;
                           });
                         },
-                        activeColor: Colors.blueAccent,
                       ),
-                    ],
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+
+                  // =========================
+                  // NEW: row of settings buttons
+                  // speed / hands / metronome / segments
+                  // =========================
+                  _SettingsRow(
+                    speed: _chosenSpeed,
+                    showHands: showHandsSelector,
+                    hands: _handsChoice,
+                    metronomeOn: _metronomeOn,
+                    segments: _segments,
+                    onSpeedTap: () async {
+                      if (_isPlayingMine) {
+                        final bool ok = await _showStopBeforeChangeDialog();
+                        if (!ok) return;
+                        await sendPlaybackCommand(false, _currentStoragePath);
+                        await _clearOwnerFields();
+                        await _disarmOnDisconnect();
+                      }
+                      await _showChooseSpeedDialog();
+                      await _playRef.update({"speed": _chosenSpeed});
+                    },
+                    onHandsTap: showHandsSelector
+                        ? () async {
+                            await _attemptChangeWhilePlaying(() {
+                              _handsChoice = (_handsChoice == _HandsChoice.oneHand)
+                                  ? _HandsChoice.twoHands
+                                  : _HandsChoice.oneHand;
+                            });
+                          }
+                        : null,
+                    onMetronomeTap: () async {
+                      if (_isPlayingMine) {
+                        final bool ok = await _showStopBeforeChangeDialog();
+                        if (!ok) return;
+                        await sendPlaybackCommand(false, _currentStoragePath);
+                        await _clearOwnerFields();
+                        await _disarmOnDisconnect();
+                      }
+                      await _showMetronomeDialog();
+                    },
+                    onSegmentsTap: () async {
+                      if (_isPlayingMine) {
+                        final bool ok = await _showStopBeforeChangeDialog();
+                        if (!ok) return;
+                        await sendPlaybackCommand(false, _currentStoragePath);
+                        await _clearOwnerFields();
+                        await _disarmOnDisconnect();
+                      }
+                      final bool ok = await _showChooseSegmentsDialog();
+                      if (!ok) return;
+                      await _playRef.update({"segments": _segments});
+                    },
                   ),
 
-                  const SizedBox(height: 18),
+
+                  
+                  const SizedBox(height: 55),
 
                   // =========================
-                  // NEW: 3 green circles
+                  // Circles (bigger + bigger text)
+                  // Disabled when someone else plays
                   // =========================
-
                   Opacity(
                     opacity: circlesEnabled ? 1.0 : 0.45,
                     child: IgnorePointer(
@@ -907,11 +1027,12 @@ class _SongScreenState extends State<SongScreen> {
                       ),
                     ),
                   ),
+
                   const SizedBox(height: 14),
 
                   if (_someoneElsePlaying)
                     Padding(
-                      padding: const EdgeInsets.only(top: 8),
+                      padding: const EdgeInsets.only(top: 6),
                       child: Text(
                         'Playing now: ${_ownerName.isEmpty ? "Someone" : _ownerName}',
                         style: const TextStyle(color: Colors.white70),
@@ -919,7 +1040,7 @@ class _SongScreenState extends State<SongScreen> {
                       ),
                     ),
 
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                 ],
               ),
             );
@@ -935,7 +1056,198 @@ class _SongScreenState extends State<SongScreen> {
 }
 
 // =====================
-// NEW circles widget
+// Settings row widget
+// =====================
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({
+    required this.speed,
+    required this.showHands,
+    required this.hands,
+    required this.metronomeOn,
+    required this.segments,
+    required this.onSpeedTap,
+    required this.onHandsTap,
+    required this.onMetronomeTap,
+    required this.onSegmentsTap,
+  });
+
+  final double speed;
+  final bool showHands;
+  final _HandsChoice hands;
+  final bool metronomeOn;
+  final int segments;
+
+  final VoidCallback onSpeedTap;
+  final VoidCallback? onHandsTap;
+  final VoidCallback onMetronomeTap;
+  final VoidCallback onSegmentsTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _SettingPill(
+            title: "Speed",
+            valueText: "${speed.toStringAsFixed(1)}x",
+            icon: Icons.speed,
+            onTap: onSpeedTap,
+          ),
+          
+
+
+
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _SettingPill(
+            title: "Hands",
+            valueText: showHands ? " " : "—",
+            icon: Icons.pan_tool, 
+            onTap: showHands ? onHandsTap : null,
+            disabled: !showHands,
+            customIcon: showHands ? _HandsIcon(twoHands: hands == _HandsChoice.twoHands) : null,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _SettingPill(
+            title: "Metronome",
+            valueText: metronomeOn ? "On" : "Off",
+            icon: Icons.music_note, // if you have a metronome icon, swap it
+            onTap: onMetronomeTap,
+          ),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _SettingPill(
+            title: "Seg",
+            valueText: "$segments",
+            icon: Icons.view_week,
+            onTap: onSegmentsTap,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HandsIcon extends StatelessWidget {
+  const _HandsIcon({required this.twoHands});
+
+  final bool twoHands;
+
+  @override
+  Widget build(BuildContext context) {
+    const IconData handIcon = Icons.front_hand_rounded; 
+
+    if (!twoHands) {
+      return const Icon(handIcon, color: Colors.white, size: 22);
+    }
+
+    return const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(handIcon, color: Colors.white, size: 18),
+        SizedBox(width: 4),
+        Icon(handIcon, color: Colors.white, size: 18),
+      ],
+    );
+  }
+}
+
+
+
+class _SettingPill extends StatelessWidget {
+  const _SettingPill({
+    required this.title,
+    required this.valueText,
+    required this.icon,
+    required this.onTap,
+    this.disabled = false,
+    this.showX = false,
+    this.customIcon, 
+  });
+
+  final String title;
+  final String valueText;
+  final IconData icon;
+  final VoidCallback? onTap;
+  final bool disabled;
+  final bool showX;
+  final Widget? customIcon;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool enabled = !disabled && onTap != null;
+
+    return Opacity(
+      opacity: enabled ? 1.0 : 0.45,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF2A2A2A),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: Colors.white12),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Stack(
+              alignment: Alignment.center,
+              clipBehavior: Clip.none,
+              children: [
+                SizedBox(
+                  height: 22,
+                  child: Center(
+                    child: customIcon ?? Icon(icon, color: Colors.white, size: 22),
+                  ),
+                ),
+                if (showX)
+                  Positioned(
+                    right: -2,
+                    top: -2,
+                    child: Container(
+                      padding: const EdgeInsets.all(2),
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.redAccent,
+                      ),
+                      child: const Icon(Icons.close, size: 12, color: Colors.white),
+                    ),
+                  ),
+              ],
+            ),
+
+              const SizedBox(height: 6),
+              Text(
+                title,
+                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                valueText,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// =====================
+// Circles widget (bigger)
 // =====================
 class _ModeCirclesRow extends StatelessWidget {
   const _ModeCirclesRow({
@@ -956,7 +1268,6 @@ class _ModeCirclesRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Expanded(
           child: _GreenModeCircle(
@@ -978,7 +1289,7 @@ class _ModeCirclesRow extends StatelessWidget {
         const SizedBox(width: 14),
         Expanded(
           child: _GreenModeCircle(
-            title: "Simon\nSong",
+            title: "Simon\nGame",
             selected: selected == _PlayMode.simon,
             isPlayingMine: isPlayingMine && selected == _PlayMode.simon,
             onTap: onSimon,
@@ -1004,18 +1315,16 @@ class _GreenModeCircle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color fill = selected ? const Color(0xFF00C853) : const Color(0xFF2E7D32);
+    final Color fill =
+        selected ? const Color(0xFF00C853) : const Color(0xFF2E7D32);
     final Color border = selected ? Colors.white : Colors.transparent;
 
-   return Center(
-  child: SizedBox(
-    width: 120,   // <-- גודל עיגול (תשני למה שבא לך: 110/130 וכו')
-    height: 120,
-    child: InkWell(
+    return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(999),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
+        height: 118, // bigger
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: fill,
@@ -1035,7 +1344,7 @@ class _GreenModeCircle extends StatelessWidget {
               Icon(
                 isPlayingMine ? Icons.stop_circle : Icons.play_circle_fill,
                 color: Colors.black,
-                size: 44, // <-- היה 34
+                size: 42, // bigger icon
               ),
               const SizedBox(height: 8),
               Text(
@@ -1044,18 +1353,15 @@ class _GreenModeCircle extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.black,
                   fontWeight: FontWeight.w900,
-                  fontSize: 14, // <-- היה 12
-                  height: 1.1,  // <-- קצת יותר מרווח
+                  fontSize: 14, // bigger text
+                  height: 1.05,
                 ),
               ),
             ],
           ),
         ),
       ),
-    ),
-  ),
-);
-
+    );
   }
 }
 
@@ -1068,10 +1374,10 @@ class _LabeledBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [child],
-    );
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // label currently not shown in your old UI; keep minimal (as you asked: "בדיוק כמו עכשיו")
+      child,
+    ]);
   }
 }
 
@@ -1116,100 +1422,6 @@ class _DarkDropdown extends StatelessWidget {
             if (v == null) return;
             onChanged(v);
           },
-        ),
-      ),
-    );
-  }
-}
-
-class _HandsOneVsTwoPicker extends StatelessWidget {
-  final _HandsChoice value;
-  final ValueChanged<_HandsChoice> onChanged;
-
-  const _HandsOneVsTwoPicker({required this.value, required this.onChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      padding: const EdgeInsets.all(6),
-      child: Row(
-        children: [
-          _segOneHand(
-            selected: value == _HandsChoice.oneHand,
-            onTap: () => onChanged(_HandsChoice.oneHand),
-          ),
-          const SizedBox(width: 6),
-          _segTwoHands(
-            selected: value == _HandsChoice.twoHands,
-            onTap: () => onChanged(_HandsChoice.twoHands),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _segOneHand({required bool selected, required VoidCallback onTap}) {
-    return Expanded(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: selected ? Colors.blueAccent.withOpacity(0.25) : null,
-            border: Border.all(
-              color: selected ? Colors.blueAccent : Colors.transparent,
-              width: 1.2,
-            ),
-          ),
-          child: Icon(
-            Icons.pan_tool,
-            color: selected ? Colors.blueAccent : Colors.white70,
-            size: 20,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _segTwoHands({required bool selected, required VoidCallback onTap}) {
-    return Expanded(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            color: selected ? Colors.blueAccent.withOpacity(0.25) : null,
-            border: Border.all(
-              color: selected ? Colors.blueAccent : Colors.transparent,
-              width: 1.2,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.pan_tool,
-                color: selected ? Colors.blueAccent : Colors.white70,
-                size: 18,
-              ),
-              const SizedBox(width: 6),
-              Icon(
-                Icons.pan_tool,
-                color: selected ? Colors.blueAccent : Colors.white70,
-                size: 18,
-              ),
-            ],
-          ),
         ),
       ),
     );
