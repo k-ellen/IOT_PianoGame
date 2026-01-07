@@ -87,11 +87,21 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
   
   // GET PLAY MODE (0 = Memorize/Interactive, 1 = Follow/Visual)
   if (Firebase.RTDB.getInt(&fbdo, "/esp32API/playCommand/playMode")) {
-    int modeVal = fbdo.intData();
-    if (modeVal == 0) {
-      currentMode = MODE_FOLLOW; // Visual + Speed
-    } else {
-      currentMode = MODE_LEARN;  // Interactive + Normal Speed
+    int mode = fbdo.intData();
+
+    switch (mode) {
+      case 1:
+        currentMode = MODE_FOLLOW;
+        break;
+
+      case 2:
+        currentMode = MODE_SIMON;   // ✅ NEW
+        break;
+
+      case 0:
+      default:
+        currentMode = MODE_LEARN;
+        break;
     }
   } else {
     currentMode = MODE_LEARN; // Default

@@ -172,8 +172,6 @@ void loop() {
     Led_clear();        // Clear any rainbow/notes
     isIdleMode = false; // Stop animation during song
 
-    currentMode = MODE_SIMON;
-
     Player_playSong(localPath);
 
     // Song Finished:
