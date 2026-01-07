@@ -57,7 +57,7 @@ static void handleNoteOn(byte channel, byte note, byte velocity) {
   lastActivityTime = millis();
 
   // 3. YOUR LOGIC (Game vs Free Play)
-  if (currentMode == MODE_LEARN) {
+  if (currentMode == MODE_LEARN|| currentMode == MODE_SIMON) {
     // Forward to Game Engine
     Player_onNoteOn(note); 
   } 
@@ -85,7 +85,7 @@ static void handleNoteOff(byte channel, byte note, byte velocity) {
   lastActivityTime = millis();
 
   // 2. Standard Logic
-  if (currentMode == MODE_LEARN) {
+  if (currentMode == MODE_LEARN|| currentMode == MODE_SIMON) {
     Player_onNoteOff(note);
   } 
   else if (currentMode == MODE_FREE) {
@@ -171,6 +171,8 @@ void loop() {
     Serial.println(localPath);
     Led_clear();        // Clear any rainbow/notes
     isIdleMode = false; // Stop animation during song
+
+    currentMode = MODE_SIMON;
 
     Player_playSong(localPath);
 
