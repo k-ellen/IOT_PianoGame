@@ -7,30 +7,24 @@
 #include "FirebaseControl.h"
 #include "SegmentBuilder.h"
 
-// Segment learning helpers
+// =====================================================
+// GLOBAL STATE
+// =====================================================
+
 static bool g_ignoreUserInput = false;
 static bool g_segmentHadMistake = false;
 
-// Keep segments global/static (not stack)
 static Segment segments[MAX_SEGMENTS];
 
-// playback speed
+// FOLLOW mode speed
 float playbackSpeed = 1.0f;
 
-// =======================
-// SIMON STATE
-// =======================
+// =====================================================
+// MEMORIZE MODE STATE
+// =====================================================
 
-static uint8_t simonSeq[512];
-static int simonLen = 0;
-static int simonPos = 0;
-static bool simonWaitingForRelease = false;
-
-
-// =======================
-// INTERACTIVE STATE
-// =======================
 bool isLearningMode = false;
+
 static bool notesToPlay[128];
 static bool notesPressed[128];
 static bool notesSatisfied[128];
@@ -39,73 +33,108 @@ static unsigned long noteStartTime[128];
 const float DURATION_TOLERANCE = 0.8;
 const unsigned long MIN_HOLD_TIME_MS = 50;
 
+// =====================================================
+// SIMON MODE (CHORD-AWARE)
+// =====================================================
+
+#define MAX_SIMON_CHORDS 256
+#define MAX_CHORD_NOTES 8
+
+struct SimonChord {
+  uint8_t notes[MAX_CHORD_NOTES];
+  uint8_t count;
+};
+
+static SimonChord simonChords[MAX_SIMON_CHORDS];
+static int simonChordCount = 0;
+static int simonChordPos = 0;
+
+static bool chordPressed[128];
+
+// =====================================================
+
 #define MAX_TRACK_COLORS 2
 static uint32_t TRACK_COLORS[] = { 0x0000FF, 0xFF00FF };
 
 // Provided by .ino
 extern void checkMidi();
 
-// =======================
-// INPUT HANDLERS (unchanged)
-// =======================
+// =====================================================
+// INPUT HANDLERS
+// =====================================================
 
 void Player_onNoteOn(uint8_t note) {
   if (note < FIRST_KEY || note > LAST_KEY) return;
   if (g_ignoreUserInput) return;
 
-  // ===== SIMON MODE =====
+  // ================= SIMON MODE =================
   if (currentMode == MODE_SIMON) {
-    if (simonWaitingForRelease) return;
+    SimonChord &ch = simonChords[simonChordPos];
 
-    if (simonPos < simonLen && note == simonSeq[simonPos]) {
-      Led_noteOn(note, 0x00FF00); // green
-      simonPos++;
-      simonWaitingForRelease = true;
-    } else {
-      Led_noteOn(note, 0xFF0000); // red
-      g_segmentHadMistake = true;
+    bool valid = false;
+    for (int i = 0; i < ch.count; i++) {
+      if (ch.notes[i] == note) {
+        valid = true;
+        break;
+      }
     }
+
+    if (!valid) {
+      Led_noteOn(note, 0xFF0000); // ❌ wrong
+      g_segmentHadMistake = true;
+      return;
+    }
+
+    chordPressed[note] = true;
+    Led_noteOn(note, 0x00FF00); // ✅ correct
+
+    // Check if chord complete
+    bool complete = true;
+    for (int i = 0; i < ch.count; i++) {
+      if (!chordPressed[ch.notes[i]]) {
+        complete = false;
+        break;
+      }
+    }
+
+    if (complete) {
+      simonChordPos++;
+      memset(chordPressed, 0, sizeof(chordPressed));
+    }
+
     return;
   }
 
-  // ===== MEMORIZE MODE (UNCHANGED) =====
+  // ================= MEMORIZE MODE =================
   if (isLearningMode) {
     if (notesToPlay[note]) {
       notesPressed[note] = true;
       noteStartTime[note] = millis();
     } else {
       g_segmentHadMistake = true;
-      setLedBuffer(note, 0xFF0000);
+      Led_noteOn(note, 0xFF0000);
     }
     return;
   }
 
-  // ===== FREE PLAY =====
-  setLedBuffer(note, 0x00B400);
+  // ================= FREE PLAY =================
+  Led_noteOn(note, 0x00B400);
+  Audio_noteOn(note, 100);
 }
 
 void Player_onNoteOff(uint8_t note) {
   if (note < FIRST_KEY || note > LAST_KEY) return;
 
-  if (currentMode == MODE_SIMON) {
-    Led_noteOff(note);
-    simonWaitingForRelease = false;
-    return;
-  }
+  Led_noteOff(note);
 
-  notesPressed[note] = false;
-
-  if (isLearningMode && notesToPlay[note]) {
-    if (notesSatisfied[note]) setLedBuffer(note, 0);
-  } else {
-    setLedBuffer(note, 0);
+  if (currentMode == MODE_FREE) {
+    Audio_noteOff(note);
   }
 }
 
-
-// =======================
+// =====================================================
 // HELPERS
-// =======================
+// =====================================================
 
 static bool areAnyNotesUnsatisfied() {
   for (int i = 0; i < 128; i++) {
@@ -117,11 +146,10 @@ static bool areAnyNotesUnsatisfied() {
 static void verifyNoteHolds(unsigned long targetDurationMs) {
   for (int i = 0; i < 128; i++) {
     if (notesToPlay[i] && notesPressed[i] && !notesSatisfied[i]) {
-      unsigned long timeHeld = millis() - noteStartTime[i];
-      unsigned long required = (unsigned long)(targetDurationMs * DURATION_TOLERANCE);
-      if (required < MIN_HOLD_TIME_MS) required = MIN_HOLD_TIME_MS;
-
-      if (timeHeld >= required) {
+      unsigned long held = millis() - noteStartTime[i];
+      unsigned long req = max((unsigned long)(targetDurationMs * DURATION_TOLERANCE),
+                              MIN_HOLD_TIME_MS);
+      if (held >= req) {
         notesSatisfied[i] = true;
         Led_noteOn(i, 0x00FF00);
       }
@@ -130,16 +158,25 @@ static void verifyNoteHolds(unsigned long targetDurationMs) {
 }
 
 static void resetLearningState() {
-  for (int i = 0; i < 128; i++) {
-    notesToPlay[i] = false;
-    notesPressed[i] = false;
-    notesSatisfied[i] = false;
-  }
+  memset(notesToPlay, 0, sizeof(notesToPlay));
+  memset(notesPressed, 0, sizeof(notesPressed));
+  memset(notesSatisfied, 0, sizeof(notesSatisfied));
   Led_clear();
   Audio_allNotesOff();
 }
 
-// --- PLAY DEMO (Listen Only) ---
+static void resetSimonState() {
+  simonChordPos = 0;
+  simonChordCount = 0;
+  memset(chordPressed, 0, sizeof(chordPressed));
+  g_segmentHadMistake = false;
+  Led_clear();
+}
+
+// =====================================================
+// DEMO (USED BY MEMORIZE)
+// =====================================================
+
 static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segEnd) {
   MidiParser midi;
   if (!midi.open(path)) return;
@@ -147,7 +184,6 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
   resetLearningState();
   currentMode = MODE_SONG_AUDIO;
   g_ignoreUserInput = true;
-  isLearningMode = false;
 
   uint32_t tempoUS = 500000;
   uint16_t division = midi.getDivision();
@@ -162,40 +198,28 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
   uint64_t globalTicks = segStart;
   uint64_t globalTimeUS = 0;
   uint64_t startUS = micros();
-  bool haveEv = true;
 
-  while (!stopRequested) {
-    if (!haveEv) {
-      if (!midi.nextEvent(ev, absTicks)) break;
-    }
-    haveEv = false;
-
-    if (ev.type == MIDI_END) break;
-    if (absTicks < segStart) continue;
-    if (segEnd != (uint64_t)(-1) && absTicks >= segEnd) break;
-
-    uint64_t deltaTicks = absTicks - globalTicks;
-    if (deltaTicks > 0) {
-      uint64_t stepUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
-      globalTimeUS += stepUS;
+  while (!stopRequested && absTicks < segEnd) {
+    uint64_t dt = absTicks - globalTicks;
+    if (dt) {
+      globalTimeUS += (dt * tempoUS) / division;
       globalTicks = absTicks;
 
-      while (!stopRequested && (int64_t)(startUS + globalTimeUS - micros()) > 0) {
+      while ((int64_t)(startUS + globalTimeUS - micros()) > 0) {
         FirebaseControl_checkStop();
         delay(1);
       }
     }
 
     if (ev.type == MIDI_NOTE_ON) {
-      uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
-      Led_noteOn(ev.note, color);
+      Led_noteOn(ev.note, TRACK_COLORS[ev.track % MAX_TRACK_COLORS]);
       Audio_noteOn(ev.note, ev.velocity);
     } else if (ev.type == MIDI_NOTE_OFF) {
       Led_noteOff(ev.note);
       Audio_noteOff(ev.note);
-    } else if (ev.type == MIDI_TEMPO) {
-      tempoUS = ev.tempoUS;
     }
+
+    if (!midi.nextEvent(ev, absTicks)) break;
   }
 
   Audio_allNotesOff();
@@ -203,7 +227,9 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
   midi.close();
 }
 
-// --- PRACTICE (Interactive) ---
+// =====================================================
+// PRACTICE (USED BY MEMORIZE)
+// =====================================================
 static void practiceSegment(const String& path, uint64_t segStart, uint64_t segEnd) {
   MidiParser midi;
   if (!midi.open(path)) return;
@@ -290,89 +316,17 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
   midi.close();
 }
 
-// =======================
-// MAIN ENTRY POINT
-// =======================
-// --- FOLLOW MODE (Visual Only, Speed Controlled) ---
-static void playVisualSong(const String& path) {
-  MidiParser midi;
-  if (!midi.open(path)) return;
-
-  Led_clear();
-  
-  uint32_t tempoUS = 500000;
-  uint16_t division = midi.getDivision();
-  
-  MidiEvent ev;
-  uint64_t absTicks = 0;
-  
-  // State tracking
-  uint64_t globalTicks = 0;
-  uint64_t startUS = micros();
-  uint64_t accumulatedDelayUS = 0; // Tracks the "stretched" time
-
-  Serial.printf("🚀 Starting Follow Mode at %.1fx speed\n", playbackSpeed);
-
-  bool haveEv = false;
-
-  while (!stopRequested) {
-    if (!haveEv) {
-      if (!midi.nextEvent(ev, absTicks)) break; // End of file
-      haveEv = true;
-    }
-
-    // Process Time Delta
-    uint64_t deltaTicks = absTicks - globalTicks;
-    
-    if (deltaTicks > 0) {
-      // 1. Calculate Standard Duration (at 1.0 speed)
-      uint64_t standardStepUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
-      
-      // 2. APPLY SPEED MATH
-      // Divide duration by speed (e.g., 2.0 speed = half duration)
-      uint64_t adjustedStepUS = (uint64_t)(standardStepUS / playbackSpeed);
-
-      accumulatedDelayUS += adjustedStepUS;
-      globalTicks = absTicks;
-
-      // 3. Wait loop (using the adjusted time)
-      while (!stopRequested && (int64_t)(startUS + accumulatedDelayUS - micros()) > 0) {
-        FirebaseControl_checkStop(); 
-        // Led_update(); // Keep LEDs refreshing
-        delay(1);
-      }
-    }
-
-    // Process Events
-    if (ev.type == MIDI_NOTE_ON) {
-      // Visual ONLY: No Audio call here
-      uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
-      Led_noteOn(ev.note, color);
-    } 
-    else if (ev.type == MIDI_NOTE_OFF) {
-      Led_noteOff(ev.note);
-    } 
-    else if (ev.type == MIDI_TEMPO) {
-      tempoUS = ev.tempoUS;
-    }
-
-    haveEv = false; // Done with this event
-    // Led_update();   // Ensure immediate update
-  }
-
-  Led_clear();
-  midi.close();
-}
+// =====================================================
+// SIMON DEMO
+// =====================================================
 
 static void playSimonDemo(const String& path, int uptoSegment) {
   MidiParser midi;
   if (!midi.open(path)) return;
 
-  Led_clear();
-  Audio_allNotesOff();
-
-  g_ignoreUserInput = true;
+  resetSimonState();
   currentMode = MODE_SONG_AUDIO;
+  g_ignoreUserInput = true;
 
   uint32_t tempoUS = 500000;
   uint16_t division = midi.getDivision();
@@ -383,10 +337,7 @@ static void playSimonDemo(const String& path, int uptoSegment) {
   MidiEvent ev;
   uint64_t absTicks = 0;
 
-  // Fast-forward
-  while (midi.nextEvent(ev, absTicks) && absTicks < startTick) {
-    if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
-  }
+  while (midi.nextEvent(ev, absTicks) && absTicks < startTick) {}
 
   uint64_t globalTicks = startTick;
   uint64_t globalTimeUS = 0;
@@ -398,24 +349,18 @@ static void playSimonDemo(const String& path, int uptoSegment) {
       globalTimeUS += (dt * tempoUS) / division;
       globalTicks = absTicks;
 
-      while (!stopRequested &&
-             (int64_t)(startUS + globalTimeUS - micros()) > 0) {
+      while ((int64_t)(startUS + globalTimeUS - micros()) > 0) {
         FirebaseControl_checkStop();
         delay(1);
       }
     }
 
     if (ev.type == MIDI_NOTE_ON) {
-      uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
-      Led_noteOn(ev.note, color);          // ✅ LED ON
-      Audio_noteOn(ev.note, ev.velocity);  // ✅ AUDIO
-    }
-    else if (ev.type == MIDI_NOTE_OFF) {
-      Led_noteOff(ev.note);                // ✅ LED OFF
+      Led_noteOn(ev.note, 0x0000FF);
+      Audio_noteOn(ev.note, ev.velocity);
+    } else if (ev.type == MIDI_NOTE_OFF) {
+      Led_noteOff(ev.note);
       Audio_noteOff(ev.note);
-    }
-    else if (ev.type == MIDI_TEMPO) {
-      tempoUS = ev.tempoUS;
     }
 
     if (!midi.nextEvent(ev, absTicks)) break;
@@ -426,29 +371,39 @@ static void playSimonDemo(const String& path, int uptoSegment) {
   midi.close();
 }
 
+// =====================================================
+// SIMON PRACTICE (CHORD AWARE)
+// =====================================================
+
 static void practiceSimon(const String& path, int uptoSegment) {
   MidiParser midi;
   if (!midi.open(path)) return;
 
+  resetSimonState();
   currentMode = MODE_SIMON;
   g_ignoreUserInput = false;
-  g_segmentHadMistake = false;
-
-  simonLen = 0;
-  simonPos = 0;
-  simonWaitingForRelease = false;
 
   uint64_t startTick = segments[0].startTick;
   uint64_t endTick   = segments[uptoSegment].endTick;
 
   MidiEvent ev;
   uint64_t absTicks = 0;
+  uint64_t lastTick = (uint64_t)-1;
 
   while (midi.nextEvent(ev, absTicks) && absTicks < startTick) {}
 
   while (midi.nextEvent(ev, absTicks) && absTicks < endTick) {
     if (ev.type == MIDI_NOTE_ON && ev.velocity > 0) {
-      simonSeq[simonLen++] = ev.note;
+      if (absTicks != lastTick) {
+        simonChords[simonChordCount].count = 0;
+        lastTick = absTicks;
+        simonChordCount++;
+      }
+
+      SimonChord &ch = simonChords[simonChordCount - 1];
+      if (ch.count < MAX_CHORD_NOTES) {
+        ch.notes[ch.count++] = ev.note;
+      }
     }
   }
 
@@ -458,87 +413,93 @@ static void practiceSimon(const String& path, int uptoSegment) {
     checkMidi();
     FirebaseControl_checkStop();
 
-    if (g_segmentHadMistake) return;   // ❌ restart round
-    if (simonPos >= simonLen) return;  // ✅ success
+    if (g_segmentHadMistake) return;
+    if (simonChordPos >= simonChordCount) return;
 
     delay(2);
   }
 }
 
+// =====================================================
+// FOLLOW MODE
+// =====================================================
+
+static void playVisualSong(const String& path) {
+  MidiParser midi;
+  if (!midi.open(path)) return;
+
+  Led_clear();
+
+  uint32_t tempoUS = 500000;
+  uint16_t division = midi.getDivision();
+
+  MidiEvent ev;
+  uint64_t absTicks = 0;
+  uint64_t globalTicks = 0;
+  uint64_t startUS = micros();
+  uint64_t accUS = 0;
+
+  while (!stopRequested) {
+    if (!midi.nextEvent(ev, absTicks)) break;
+
+    uint64_t dt = absTicks - globalTicks;
+    if (dt) {
+      accUS += ((dt * tempoUS) / division) / playbackSpeed;
+      globalTicks = absTicks;
+
+      while ((int64_t)(startUS + accUS - micros()) > 0) {
+        FirebaseControl_checkStop();
+        delay(1);
+      }
+    }
+
+    if (ev.type == MIDI_NOTE_ON)
+      Led_noteOn(ev.note, TRACK_COLORS[ev.track % MAX_TRACK_COLORS]);
+    else if (ev.type == MIDI_NOTE_OFF)
+      Led_noteOff(ev.note);
+  }
+
+  Led_clear();
+  midi.close();
+}
+
+// =====================================================
+// MAIN ENTRY POINT
+// =====================================================
+
 void Player_playSong(const String &path) {
   stopRequested = false;
 
-  // 1. FOLLOW MODE (Firebase Mode 1)
-  // Visual only, Continuous, Respects 'playbackSpeed'
   if (currentMode == MODE_FOLLOW) {
-    Serial.println("📂 Mode: FOLLOW (Visual + Speed)");
     playVisualSong(path);
-  } 
-  // ===== SIMON MODE =====
+  }
   else if (currentMode == MODE_SIMON) {
-    Serial.println("📂 Mode: SIMON SAYS");
-
     int segmentCount = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 1);
-    if (segmentCount <= 0) return;
-
-    for (int round = 0; round < segmentCount && !stopRequested; round++) {
+    for (int r = 0; r < segmentCount && !stopRequested; r++) {
       while (!stopRequested) {
-        playSimonDemo(path, round);
-        practiceSimon(path, round);
-
-        if (!g_segmentHadMistake) break;  // advance
-        delay(800);                       // retry same round
+        playSimonDemo(path, r);
+        practiceSimon(path, r);
+        if (!g_segmentHadMistake) break;
+        delay(800);
       }
     }
   }
-  // 2. MEMORIZE MODE (Firebase Mode 0)
-  // Interactive, Bar-by-Bar, ALWAYS 1.0x Speed
   else {
-    Serial.println("📂 Mode: MEMORIZE (Interactive)");
-    Serial.println("📂 Building segments by BARS...");
-
     int segmentCount = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 2);
-
-    if (segmentCount <= 0) {
-      Serial.println("❌ Segment build failed.");
-      return;
-    }
-    
-    // Loop through segments
     for (int s = 0; s < segmentCount && !stopRequested; s++) {
-        Serial.printf("▶ Learning Segment %d/%d\n", s + 1, segmentCount);
-
-        // This runs at normal speed (logic unchanged)
+      playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
+      while (!stopRequested) {
+        practiceSegment(path, segments[s].startTick, segments[s].endTick);
+        if (!g_segmentHadMistake) break;
         playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
-        if (stopRequested) break;
-        
-        while (!stopRequested) {
-             practiceSegment(path, segments[s].startTick, segments[s].endTick);
-             if (stopRequested) break;
-
-             if (!g_segmentHadMistake) {
-                 Serial.println("✨ Segment Cleared!");
-                //  Audio_playEffect("/feedback/continue.wav");
-                 delay(1500); 
-                 break;
-             }
-
-             Serial.println("⚠️ Mistakes made. Replaying...");
-            //  Audio_playEffect("/feedback/try_again.wav");
-             delay(1500); 
-             playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
-        }
+      }
     }
   }
 
-  // Common Cleanup
   Audio_allNotesOff();
   Led_clear();
   currentMode = MODE_FREE;
-  Serial.println("🏁 Song finished!");
 
-  // If finished naturally, update App status
-  if (!stopRequested) {
-     FirebaseControl_setStatus("stopped");
-  }
+  if (!stopRequested)
+    FirebaseControl_setStatus("stopped");
 }
