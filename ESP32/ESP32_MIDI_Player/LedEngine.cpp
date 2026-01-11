@@ -80,7 +80,36 @@ void setLedBuffer(int note, uint32_t color) {
 //   ledDirty = true; 
 // }
 
-// ✅ NEW: immediate clear of entire strip
+void Led_animateStartup() {
+  Led_clear();
+  
+  // Calculate center
+  int center = NUMPIXELS / 2;
+  
+  // Pick a color (e.g., Cyan/Blue)
+  uint32_t color = pixels.Color(0, 180, 255); 
+
+  // Expand from center to ends
+  for (int i = 0; i <= center; i++) {
+    // Right side
+    if (center + i < NUMPIXELS) pixels.setPixelColor(center + i, color);
+    
+    // Left side
+    if (center - i >= 0) pixels.setPixelColor(center - i, color);
+    pixels.setBrightness(128);
+    pixels.show();
+    delay(20); // Adjust speed of expansion here
+  }
+  
+  // Hold for a moment
+  delay(500);
+  
+
+  // Clear
+  Led_clear();
+}
+
+// immediate clear of entire strip
 void Led_clearAll() {
   pixels.clear();
   pixels.show();
