@@ -274,6 +274,8 @@ static void playVisualSong(const String& path) {
   uint32_t tempoUS = 500000; // Default 120 BPM
   uint16_t division = midi.getDivision(); 
   
+  unsigned long lastStopCheck = 0;
+  
   MidiEvent ev;
   uint64_t absTicks = 0;
   uint64_t globalTicks = 0;
@@ -289,7 +291,23 @@ static void playVisualSong(const String& path) {
 
   bool haveEv = false;
 
+  auto runMetronomeLogic = [&]() {
+    if (localMetronomeEnabled && micros() >= nextBeatTime) {
+        Audio_triggerMetronome(); 
+        
+        // Recalculate interval (in case playbackSpeed changed)
+        beatIntervalUS = (double)tempoUS / playbackSpeed;
+        nextBeatTime += beatIntervalUS;
+        
+        // Catch up if we lagged behind (prevents rapid-fire clicks)
+        if (micros() > nextBeatTime + beatIntervalUS) {
+          nextBeatTime = micros() + beatIntervalUS;
+        }
+    }
+  };
+
   while (!stopRequested) {
+    runMetronomeLogic();
     if (!haveEv) {
       if (!midi.nextEvent(ev, absTicks)) break; 
       haveEv = true;
@@ -304,31 +322,30 @@ static void playVisualSong(const String& path) {
       accumulatedDelayUS += adjustedStepUS;
       globalTicks = absTicks;
 
-      // ---------------------------------------------------------
-      // ✅ THIS IS THE CRITICAL WAIT LOOP
-      // The metronome call MUST go inside here.
-      // ---------------------------------------------------------
       while (!stopRequested && (int64_t)(startUS + accumulatedDelayUS - micros()) > 0) {
-        
-        // 1. Check if it is time for a Metronome Click
-        if (localMetronomeEnabled && micros() >= nextBeatTime) {
+        runMetronomeLogic();
+        // // 1. Check if it is time for a Metronome Click
+        // if (localMetronomeEnabled && micros() >= nextBeatTime) {
            
-           // >>>>> HERE IS THE CALL <<<<<
-           Audio_triggerMetronome(); 
-           // >>>>>>>>>>>>>>>>>>>>>>>>>>>
+        //    Audio_triggerMetronome(); 
            
-           // Calculate when the next beat should happen
-           beatIntervalUS = (double)tempoUS / playbackSpeed;
-           nextBeatTime += beatIntervalUS;
+        //    // Calculate when the next beat should happen
+        //    beatIntervalUS = (double)tempoUS / playbackSpeed;
+        //    nextBeatTime += beatIntervalUS;
            
-           // Safety: If we lagged behind, catch up to current time
-           if (micros() > nextBeatTime + beatIntervalUS) {
-             nextBeatTime = micros() + beatIntervalUS;
-           }
-        }
+        //    // Safety: If we lagged behind, catch up to current time
+        //    if (micros() > nextBeatTime + beatIntervalUS) {
+        //      nextBeatTime = micros() + beatIntervalUS;
+        //    }
+        // }
 
         // 2. Standard Checks
-        FirebaseControl_checkStop(); 
+        // Only check WiFi every 100ms. checking every 1ms causes lag.
+        if (millis() - lastStopCheck > 100) {
+           FirebaseControl_checkStop(); 
+           lastStopCheck = millis();
+        }
+        // FirebaseControl_checkStop(); 
         delay(1); // Short delay to prevent crashing
       }
     }
@@ -391,14 +408,14 @@ void Player_playSong(const String &path) {
 
              if (!g_segmentHadMistake) {
                  Serial.println("✨ Segment Cleared!");
-                //  Audio_playEffect("/feedback/continue.wav");
-                 delay(1500); 
+                 Audio_playEffect("/feedback/continue.wav");
+                //  delay(1500); 
                  break;
              }
 
              Serial.println("⚠️ Mistakes made. Replaying...");
-            //  Audio_playEffect("/feedback/try_again.wav");
-             delay(1500); 
+             Audio_playEffect("/feedback/try_again.wav");
+            //  delay(1500); 
              playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
         }
     }
@@ -409,7 +426,7 @@ void Player_playSong(const String &path) {
   Led_clear();
   currentMode = MODE_FREE;
   Serial.println("🏁 Song finished!");
-
+  Audio_playEffect("/feedback/finished.wav");
   // If finished naturally, update App status
   if (!stopRequested) {
      FirebaseControl_setStatus("stopped");

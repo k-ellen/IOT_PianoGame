@@ -21,7 +21,7 @@ static int leds[][3] = {
 void Led_init() {
   pixels.begin();
   pixels.clear();
-  pixels.setBrightness(128);
+  pixels.setBrightness(50);
   pixels.show();
 }
 
@@ -96,7 +96,7 @@ void Led_animateStartup() {
     
     // Left side
     if (center - i >= 0) pixels.setPixelColor(center - i, color);
-    pixels.setBrightness(128);
+    // pixels.setBrightness(50);
     pixels.show();
     delay(20); // Adjust speed of expansion here
   }

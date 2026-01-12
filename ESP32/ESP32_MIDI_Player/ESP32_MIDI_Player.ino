@@ -148,7 +148,7 @@ void setup() {
 
   Serial.println("🎹 Ready (FREE PLAY)");
 
-  // Led_animateStartup();
+  Led_animateStartup();
 }
 
 // =======================
