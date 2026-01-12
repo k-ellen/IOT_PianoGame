@@ -18,3 +18,5 @@ void Player_onNoteOn(uint8_t note);
 void Player_onNoteOff(uint8_t note);
 
 void checkMidi();
+
+void Player_setMemorizeBars(int bars);

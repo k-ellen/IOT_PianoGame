@@ -117,6 +117,11 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
       Player_setMetronome(false); 
   }
 
+  if (Firebase.RTDB.getInt(&fbdo, "/esp32API/playCommand/segments")) {
+    int bars = fbdo.intData();
+    Player_setMemorizeBars(bars);
+  }
+
   return true;
 }
 

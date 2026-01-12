@@ -10,7 +10,8 @@
 // =====================================================
 // GLOBAL STATE
 // =====================================================
-
+// Firebase-configurable segment size (bars per segment)
+static int g_memorizeBarsPerSegment = 2; // default fallback
 static bool g_ignoreUserInput = false;
 static bool g_segmentHadMistake = false;
 
@@ -71,6 +72,16 @@ extern void checkMidi();
 // =====================================================
 // HELPERS
 // =====================================================
+
+void Player_setMemorizeBars(int bars) {
+  if (bars <= 0) {
+    Serial.println("⚠️ Invalid segment count from Firebase, keeping previous value");
+    return;
+  }
+
+  g_memorizeBarsPerSegment = bars;
+  Serial.printf("📐 Memorize mode segments set to %d bars\n", g_memorizeBarsPerSegment);
+}
 
 // Drain any buffered NoteOn/NoteOff that happened during demo.
 // IMPORTANT: we force demo mode + ignore flag while draining, so nothing can set mistakes.
@@ -393,7 +404,7 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
 }
 
 // =====================================================
-// SIMON PRACTICE (CHORDS)
+// SIMON PRACTICE (CHORDS + METRONOME)
 // =====================================================
 
 static void practiceSimon(const String& path, int uptoSegment) {
@@ -407,6 +418,8 @@ static void practiceSimon(const String& path, int uptoSegment) {
   MidiParser midi;
   if (!midi.open(path)) return;
 
+  uint32_t tempoUS = 500000; // default tempo
+  uint32_t tempoMetro = 500000;
   uint64_t startTick = segments[0].startTick;
   uint64_t endTick   = segments[uptoSegment].endTick;
 
@@ -414,9 +427,21 @@ static void practiceSimon(const String& path, int uptoSegment) {
   uint64_t absTicks = 0;
   uint64_t lastTick = (uint64_t)-1;
 
-  while (midi.nextEvent(ev, absTicks) && absTicks < startTick) {}
+  // Seek to start + capture tempo
+  while (midi.nextEvent(ev, absTicks) && absTicks < startTick) {
+    if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS;
+    }
+  }
 
+  tempoMetro = tempoUS;
+
+  // Build Simon chords
   while (midi.nextEvent(ev, absTicks) && absTicks < endTick) {
+    if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS;
+    }
+
     if (ev.type == MIDI_NOTE_ON && ev.velocity > 0) {
       if (absTicks != lastTick) {
         simonChords[simonChordCount].count = 0;
@@ -424,21 +449,44 @@ static void practiceSimon(const String& path, int uptoSegment) {
         simonChordCount++;
         if (simonChordCount >= MAX_SIMON_CHORDS) break;
       }
+
       SimonChord &ch = simonChords[simonChordCount - 1];
-      if (ch.count < MAX_CHORD_NOTES) ch.notes[ch.count++] = ev.note;
+      if (ch.count < MAX_CHORD_NOTES) {
+        ch.notes[ch.count++] = ev.note;
+      }
     }
   }
 
   midi.close();
 
+    // 🎵 START METRONOME (Simon Practice)
+  if (g_metronomeEnabled) {
+    Serial.println("⏰ Simon practice metronome ON");
+    Audio_setMetronomeConfig(tempoMetro, 1.0f);
+  } else {
+    Audio_setMetronomeConfig(0, 0);
+  }
+
+  // ---- USER INTERACTION LOOP ----
   while (!stopRequested) {
     checkMidi();
     FirebaseControl_checkStop();
-    if (g_segmentHadMistake) return;
-    if (simonChordPos >= simonChordCount) return;
+
+    if (g_segmentHadMistake) {
+      break;
+    }
+
+    if (simonChordPos >= simonChordCount) {
+      break;
+    }
+
     delay(2);
   }
+
+  // 🛑 STOP METRONOME
+  Audio_setMetronomeConfig(0, 0);
 }
+
 
 // =======================
 // FOLLOW MODE
@@ -532,7 +580,7 @@ void Player_playSong(const String &path) {
     playVisualSong(path);
   }
   else if (currentMode == MODE_SIMON) {
-    int count = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 1);
+    int count = buildSegmentsByBars(path, segments, MAX_SEGMENTS, g_memorizeBarsPerSegment);
     for (int r = 0; r < count && !stopRequested; r++) {
       while (!stopRequested) {
         g_segmentHadMistake = false;
@@ -556,7 +604,7 @@ void Player_playSong(const String &path) {
     Serial.println("📂 Mode: MEMORIZE (Interactive)");
     Serial.println("📂 Building segments by BARS...");
 
-    int segmentCount = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 2);
+    int segmentCount = buildSegmentsByBars(path, segments, MAX_SEGMENTS, g_memorizeBarsPerSegment);
 
     if (segmentCount <= 0) {
       Serial.println("❌ Segment build failed.");
