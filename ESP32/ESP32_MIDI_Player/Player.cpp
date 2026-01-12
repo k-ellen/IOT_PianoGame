@@ -134,7 +134,7 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
     if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
   }
 
-  Audio_setMetronomeConfig(0, 0); // turn off for the demo
+  // Audio_setMetronomeConfig(0, 0); // turn off for the demo
   // if (g_metronomeEnabled) {
   //    Audio_setMetronomeConfig(tempoUS, 1.0f);
   // } else {
@@ -177,9 +177,9 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
       Audio_noteOff(ev.note);
     } else if (ev.type == MIDI_TEMPO) {
       tempoUS = ev.tempoUS;
-      if (g_metronomeEnabled) {
-         Audio_setMetronomeConfig(tempoUS, 1.0f);
-      }
+      // if (g_metronomeEnabled) {
+      //    Audio_setMetronomeConfig(tempoUS, 1.0f);
+      // }
     }
   }
 
