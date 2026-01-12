@@ -34,8 +34,6 @@ static constexpr float DECAY_MS   = 80.0f;
 static constexpr float TAIL_MS    = 1800.0f;   // natural piano fade
 static constexpr float RELEASE_MS = 250.0f;
 
-static constexpr float METRO_DECAY_MS = 180.0f;
-
 // Levels
 static constexpr float PEAK_LEVEL = 1.0f;
 static constexpr float DECAY_LEVEL = 0.35f;    // after hammer
@@ -45,7 +43,7 @@ static constexpr uint32_t ATTACK_S  = SAMPLE_RATE * ATTACK_MS  / 1000.0f;
 static constexpr uint32_t DECAY_S   = SAMPLE_RATE * DECAY_MS   / 1000.0f;
 static constexpr uint32_t TAIL_S    = SAMPLE_RATE * TAIL_MS    / 1000.0f;
 static constexpr uint32_t RELEASE_S = SAMPLE_RATE * RELEASE_MS / 1000.0f;
-static constexpr uint32_t METRO_DECAY_S = SAMPLE_RATE * METRO_DECAY_MS / 1000.0f;
+
 
 
 // =======================
@@ -97,8 +95,7 @@ enum EnvStage : uint8_t {
   ENV_ATTACK,
   ENV_DECAY,
   ENV_TAIL,
-  ENV_RELEASE,
-  ENV_METRO_DECAY
+  ENV_RELEASE
 };
 
 
@@ -200,13 +197,6 @@ static inline void envStep(Voice &v) {
       }
     } break;
 
-    case ENV_METRO_DECAY: {
-      v.stagePos++;
-      float t = (float)v.stagePos / METRO_DECAY_S;
-      if (t >= 1.0f) { v.env = 0.0f; v.active = false; v.stage = ENV_OFF; }
-      else { v.env = PEAK_LEVEL * (1.0f - t); }
-    } break;
-
     case ENV_RELEASE: {
       v.stagePos++;
       float t = (float)v.stagePos / RELEASE_S;
@@ -234,6 +224,8 @@ static inline void envStep(Voice &v) {
 
 static void audioTask(void*) {
   int16_t outBuf[OUT_FRAMES * 2];
+
+  // Local noise base so different voices don't sync
   uint32_t globalNoise = 0x12345678u;
 
   while (true) {
@@ -241,47 +233,75 @@ static void audioTask(void*) {
       float mix = 0.0f;
 
       if (!audioMuted) {
-          float polyGain = 0.50f;
+        // metronome (simple click)
+        if (metroSamples > 0) {
+          mix = (metroSamples & 1) ? 0.9f : -0.9f;
+          metroSamples--;
+        } else {
+          // Play synth in FREE and SONG_AUDIO modes
+          if (currentMode == MODE_FREE || currentMode == MODE_SONG_AUDIO) {
 
-          for (int v = 0; v < MAX_VOICES; v++) {
-            Voice local;
-            bool act;
+            // Cheap poly gain — prevents clipping with chords
+            float polyGain = 0.60f;
 
-            portENTER_CRITICAL(&voicesMux);
-            act = voices[v].active;
-            if (act) {
-               envStep(voices[v]);
-               local = voices[v]; // Copy
-               voices[v].phase  += voices[v].inc;
-               voices[v].phase2 += voices[v].inc2;
-               voices[v].phase3 += voices[v].inc3;
-               if (voices[v].hammerLeft > 0) voices[v].hammerLeft--;
+            for (int v = 0; v < MAX_VOICES; v++) {
+              // Snapshot + update voice under short critical
+              Voice local;
+              bool act;
+
+              portENTER_CRITICAL(&voicesMux);
+              act = voices[v].active;
+              if (act) {
+                // update envelope in-place (real-time safe)
+                envStep(voices[v]);
+                local = voices[v];
+
+                // advance phases in-place
+                voices[v].phase  += voices[v].inc;
+                voices[v].phase2 += voices[v].inc2;
+                voices[v].phase3 += voices[v].inc3;
+
+                // hammer burst countdown
+                if (voices[v].hammerLeft > 0) voices[v].hammerLeft--;
+              }
+              portEXIT_CRITICAL(&voicesMux);
+
+              if (!act || local.stage == ENV_OFF) continue;
+
+              // --- oscillator: fundamental + harmonics ---
+              float s1 = fastSine(local.phase);
+              float s2 = fastSine(local.phase2);
+              float s3 = fastSine(local.phase3);
+
+              // “piano-ish” mix: strong fundamental, softer harmonics
+              float harmDecay = local.env;   // harmonics fade faster
+              float osc =
+                  (1.00f * s1) +
+                  (0.35f * s2 * harmDecay) +
+                  (0.15f * s3 * harmDecay);
+
+
+              // “hammer click” noise at attack (first ~6ms)
+              float hammer = 0.0f;
+              if (local.hammerLeft > 0) {
+                float n = lcgNoise(globalNoise);
+                hammer = n * 0.25f * (local.hammerLeft / (float)(SAMPLE_RATE * 0.006f));
+              }
+
+              // Envelope * velocity
+              float amp = local.env * local.velocity;
+
+              mix += (osc + hammer) * amp * polyGain;
             }
-            portEXIT_CRITICAL(&voicesMux);
-
-            if (!act || local.stage == ENV_OFF) continue;
-
-            // --- OSCILLATORS ---
-            float s1 = fastSine(local.phase);
-            float s2 = fastSine(local.phase2);
-            
-            // Mix: 70% Fundamental + 30% Ring (Matched to standalone)
-            float osc = (0.7f * s1) + (0.3f * s2); 
-            
-            // --- NOISE ---
-            float noise = 0.0f;
-            if (local.hammerLeft > 0) {
-                 float n = lcgNoise(globalNoise);
-                 // 0.5 volume for click
-                 noise = n * 0.5f * (local.hammerLeft / (float)(SAMPLE_RATE * 0.006f));
-            }
-
-            mix += (osc + noise) * local.env * local.velocity * polyGain;
           }
+        }
       }
 
+      // master gain + soft saturation
       mix *= masterVolume;
-      if (mix > 1.2f) mix = 1.2f;
+
+      // soft clip
+      if (mix > 1.2f)  mix = 1.2f;
       if (mix < -1.2f) mix = -1.2f;
       mix = mix / (1.0f + fabsf(mix));
 
@@ -338,65 +358,9 @@ void Audio_setMuted(bool muted) {
   if (muted) Audio_allNotesOff();
 }
 
-
 void Audio_triggerMetronome() {
-  audioMuted = false; // Optional: force unmute
-
-  float hz = 880.0f; // High Woodblock Pitch
-  float vel = 1.0f; 
-
-  int slot = allocVoice();
-  portENTER_CRITICAL(&voicesMux);
-  
-  voices[slot].active = true;
-  voices[slot].note = 0; // Not used for metro
-  voices[slot].velocity = vel;
-
-  // Oscillators (Matched to test code)
-  voices[slot].inc  = (uint32_t)((hz * 4294967296.0f) / (float)SAMPLE_RATE);
-  voices[slot].inc2 = (uint32_t)((hz * 1.45f * 4294967296.0f) / (float)SAMPLE_RATE); // Detuned harmonic
-  voices[slot].inc3 = 0;
-
-  // Envelope & Noise
-  voices[slot].stage = ENV_METRO_DECAY; // Special short decay
-  voices[slot].stagePos = 0;
-  voices[slot].env = 1.0f;
-  
-  // 400 samples noise (approx 8ms) for the "Click"
-  voices[slot].hammerLeft = 400; 
-
-  portEXIT_CRITICAL(&voicesMux);
-  // Serial.println("🔊 TOCK!"); 
+  if (!audioMuted) metroSamples = SAMPLE_RATE / 120;
 }
-// void Audio_triggerMetronome() {
-//   audioMuted = false; // Force sound
-
-//   float hz = 880.0f; // High Woodblock Pitch
-//   float vel = 1.0f; 
-
-//   int slot = allocVoice();
-//   portENTER_CRITICAL(&voicesMux);
-  
-//   voices[slot].active = true;
-//   voices[slot].note = 0; 
-//   voices[slot].velocity = vel;
-
-//   // Exact ratio from your test code (1.45)
-//   voices[slot].inc  = (uint32_t)((hz * 4294967296.0f) / (float)SAMPLE_RATE);
-//   voices[slot].inc2 = (uint32_t)((hz * 1.45f * 4294967296.0f) / (float)SAMPLE_RATE); 
-//   voices[slot].inc3 = 0;
-
-//   // Envelope
-//   voices[slot].stage = ENV_METRO_DECAY; 
-//   voices[slot].stagePos = 0;
-//   voices[slot].env = 1.0f;
-  
-//   // 400 samples noise (~8ms)
-//   voices[slot].hammerLeft = 400; 
-
-//   portEXIT_CRITICAL(&voicesMux);
-//   Serial.println("🔊 TOCK!"); 
-// }
 
 void Audio_allNotesOff() {
   portENTER_CRITICAL(&voicesMux);

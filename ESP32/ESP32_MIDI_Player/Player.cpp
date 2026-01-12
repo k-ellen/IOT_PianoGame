@@ -16,7 +16,6 @@ static bool g_segmentHadMistake = false;
 
 static Segment segments[MAX_SEGMENTS];
 float playbackSpeed = 1.0f;
-bool g_metronomeEnabled = true;
 
 // Grace window for practice start (ignore stray buffered/early presses)
 static unsigned long g_practiceStartMs = 0;
@@ -232,15 +231,21 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
   }
 
   uint64_t globalTicks = segStart;
-  uint64_t globalTimeUS = 0;
+  uint64_t accUS = 0;              // 🔥 accumulated adjusted time
   uint64_t startUS = micros();
 
   while (!stopRequested && absTicks < segEnd) {
     uint64_t dt = absTicks - globalTicks;
     if (dt) {
-      globalTimeUS += (dt * tempoUS) / division;
+      uint64_t normalUS = (dt * tempoUS) / division;
+
+      // ✅ APPLY PLAYBACK SPEED HERE
+      uint64_t adjustedUS = (uint64_t)(normalUS / playbackSpeed);
+
+      accUS += adjustedUS;
       globalTicks = absTicks;
-      while ((int64_t)(startUS + globalTimeUS - micros()) > 0) {
+
+      while ((int64_t)(startUS + accUS - micros()) > 0) {
         FirebaseControl_checkStop();
         delay(1);
       }
@@ -249,9 +254,13 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
     if (ev.type == MIDI_NOTE_ON) {
       Led_noteOn(ev.note, TRACK_COLORS[ev.track % MAX_TRACK_COLORS]);
       Audio_noteOn(ev.note, ev.velocity);
-    } else if (ev.type == MIDI_NOTE_OFF) {
+    }
+    else if (ev.type == MIDI_NOTE_OFF) {
       Led_noteOff(ev.note);
       Audio_noteOff(ev.note);
+    }
+    else if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS; // tempo changes still respected
     }
 
     if (!midi.nextEvent(ev, absTicks)) break;
@@ -261,14 +270,11 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
   Led_clear();
   midi.close();
 
-  // keep ignore true until caller flips it
   g_ignoreUserInput = true;
 }
 
-// =====================================================
-// PRACTICE (MEMORIZE)
-// =====================================================
 
+// --- PRACTICE (Interactive) ---
 static void practiceSegment(const String& path, uint64_t segStart, uint64_t segEnd) {
   MidiParser midi;
   if (!midi.open(path)) return;
@@ -279,27 +285,86 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
   isLearningMode = true;
   g_segmentHadMistake = false;
 
-  // start grace window
-  g_practiceStartMs = millis();
-
   uint32_t tempoUS = 500000;
   uint16_t division = midi.getDivision();
+
   MidiEvent ev;
   uint64_t absTicks = 0;
 
-  while (midi.nextEvent(ev, absTicks) && absTicks < segStart) {}
+  while (midi.nextEvent(ev, absTicks) && absTicks < segStart) {
+    if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
+  }
+
+  // if (g_metronomeEnabled) {
+  //    Audio_setMetronomeConfig(tempoUS, 1.0f); // Always 1.0 speed for practice
+  // } else {
+  //    Audio_setMetronomeConfig(0, 0);
+  // }
+
+  uint64_t globalTicks = segStart;
+  uint64_t globalTimeUS = 0;
+  uint64_t startUS = micros();
+  bool haveEv = true;
 
   while (!stopRequested) {
-    if (!midi.nextEvent(ev, absTicks)) break;
-    if (absTicks >= segEnd) break;
+    if (!haveEv) {
+      if (!midi.nextEvent(ev, absTicks)) break;
+    }
+    haveEv = false;
+
+    if (ev.type == MIDI_END) break;
+    if (absTicks < segStart) continue;
+    if (segEnd != (uint64_t)(-1) && absTicks >= segEnd) break;
+
+    uint64_t deltaTicks = absTicks - globalTicks;
+    if (deltaTicks > 0) {
+      uint64_t stepUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
+      unsigned long stepMs = (unsigned long)(stepUS / 1000);
+
+      if (areAnyNotesUnsatisfied()) {
+        uint64_t waitStart = micros();
+        while (!stopRequested && areAnyNotesUnsatisfied()) {
+          checkMidi();
+          // verifyNoteHolds(stepMs);
+          verifyNoteHolds(1);
+          FirebaseControl_checkStop();
+          delay(5);
+        }
+        startUS += (micros() - waitStart);
+        if (!stopRequested) delay(50);
+      }
+
+      globalTimeUS += stepUS;
+      globalTicks = absTicks;
+
+      // while (!stopRequested && (int64_t)(startUS + globalTimeUS - micros()) > 0) {
+      //   checkMidi();
+      //   verifyNoteHolds(stepMs);
+      //   FirebaseControl_checkStop();
+      //   delay(1);
+      // }
+    }
 
     if (ev.type == MIDI_NOTE_ON) {
       notesToPlay[ev.note] = true;
       notesPressed[ev.note] = false;
       notesSatisfied[ev.note] = false;
-      Led_noteOn(ev.note, TRACK_COLORS[ev.track % MAX_TRACK_COLORS]);
+
+      uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
+      Led_noteOn(ev.note, color);
+    } else if (ev.type == MIDI_NOTE_OFF) {
+      notesToPlay[ev.note] = false;
+      if (notesSatisfied[ev.note]) Led_noteOff(ev.note);
+      notesSatisfied[ev.note] = false;
+    } else if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS;
+      // if (g_metronomeEnabled) {
+      //    Audio_setMetronomeConfig(tempoUS, 1.0f);
+      // }
     }
   }
+
+  // Audio_setMetronomeConfig(0, 0); // turn off at the end of the segment
 
   Audio_allNotesOff();
   Led_clear();
@@ -364,85 +429,28 @@ static void playVisualSong(const String& path) {
   if (!midi.open(path)) return;
 
   Led_clear();
-  
-  // 1. Time Tracking Variables
-  uint32_t tempoUS = 500000; // Default 120 BPM
-  uint16_t division = midi.getDivision(); 
-  
+  uint32_t tempoUS = 500000;
+  uint16_t division = midi.getDivision();
   MidiEvent ev;
   uint64_t absTicks = 0;
   uint64_t globalTicks = 0;
   uint64_t startUS = micros();
-  uint64_t accumulatedDelayUS = 0; 
+  uint64_t accUS = 0;
 
-  // 2. METRONOME SETUP
-  bool localMetronomeEnabled = true; // Set to 'false' if you want it off by default
-  double beatIntervalUS = tempoUS / playbackSpeed; 
-  double nextBeatTime = micros(); 
-
-  Serial.printf("🚀 Follow Mode: Speed %.1fx | Metronome: ON\n", playbackSpeed);
-
-  bool haveEv = false;
-
-  while (!stopRequested) {
-    if (!haveEv) {
-      if (!midi.nextEvent(ev, absTicks)) break; 
-      haveEv = true;
-    }
-
-    uint64_t deltaTicks = absTicks - globalTicks;
-    
-    if (deltaTicks > 0) {
-      uint64_t standardStepUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
-      uint64_t adjustedStepUS = (uint64_t)(standardStepUS / playbackSpeed);
-
-      accumulatedDelayUS += adjustedStepUS;
+  while (!stopRequested && midi.nextEvent(ev, absTicks)) {
+    uint64_t dt = absTicks - globalTicks;
+    if (dt) {
+      accUS += ((dt * tempoUS) / division) / playbackSpeed;
       globalTicks = absTicks;
-
-      // ---------------------------------------------------------
-      // ✅ THIS IS THE CRITICAL WAIT LOOP
-      // The metronome call MUST go inside here.
-      // ---------------------------------------------------------
-      while (!stopRequested && (int64_t)(startUS + accumulatedDelayUS - micros()) > 0) {
-        
-        // 1. Check if it is time for a Metronome Click
-        if (localMetronomeEnabled && micros() >= nextBeatTime) {
-           
-           // >>>>> HERE IS THE CALL <<<<<
-           Audio_triggerMetronome(); 
-           // >>>>>>>>>>>>>>>>>>>>>>>>>>>
-           
-           // Calculate when the next beat should happen
-           beatIntervalUS = (double)tempoUS / playbackSpeed;
-           nextBeatTime += beatIntervalUS;
-           
-           // Safety: If we lagged behind, catch up to current time
-           if (micros() > nextBeatTime + beatIntervalUS) {
-             nextBeatTime = micros() + beatIntervalUS;
-           }
-        }
-
-        // 2. Standard Checks
-        FirebaseControl_checkStop(); 
-        delay(1); // Short delay to prevent crashing
+      while ((int64_t)(startUS + accUS - micros()) > 0) {
+        FirebaseControl_checkStop();
+        delay(1);
       }
     }
-
-    // Process MIDI Events
-    if (ev.type == MIDI_NOTE_ON) {
-      uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
-      Led_noteOn(ev.note, color);
-    } 
-    else if (ev.type == MIDI_NOTE_OFF) {
+    if (ev.type == MIDI_NOTE_ON)
+      Led_noteOn(ev.note, TRACK_COLORS[ev.track % MAX_TRACK_COLORS]);
+    else if (ev.type == MIDI_NOTE_OFF)
       Led_noteOff(ev.note);
-    } 
-    else if (ev.type == MIDI_TEMPO) {
-      tempoUS = ev.tempoUS;
-      // Important: Update metronome speed immediately when tempo changes
-      beatIntervalUS = (double)tempoUS / playbackSpeed; 
-    }
-
-    haveEv = false;
   }
 
   Led_clear();

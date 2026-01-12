@@ -90,7 +90,7 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
     int mode = fbdo.intData();
 
     switch (mode) {
-      case 1:
+      case 0:
         currentMode = MODE_FOLLOW;
         break;
 
@@ -98,7 +98,7 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
         currentMode = MODE_SIMON;   // ✅ NEW
         break;
 
-      case 0:
+      case 1:
       default:
         currentMode = MODE_LEARN;
         break;
