@@ -138,13 +138,13 @@ static void resetLearningState() {
   Audio_allNotesOff();
 }
 
-static void resetSimonState() {
-  simonChordPos = 0;
-  simonChordCount = 0;
-  memset(chordPressed, 0, sizeof(chordPressed));
-  g_segmentHadMistake = false;
-  Led_clear();
-}
+// static void resetSimonState() {
+//   simonChordPos = 0;
+//   simonChordCount = 0;
+//   memset(chordPressed, 0, sizeof(chordPressed));
+//   g_segmentHadMistake = false;
+//   Led_clear();
+// }
 
 // =====================================================
 // INPUT HANDLERS
@@ -157,52 +157,8 @@ void Player_onNoteOn(uint8_t note) {
   // demo guard (extra safety)
   if (currentMode == MODE_SONG_AUDIO) return;
 
-  // Grace window: ignore any early/stray presses right after practice begins
-  if ((currentMode == MODE_SIMON || isLearningMode) &&
-      (millis() - g_practiceStartMs) < PRACTICE_GRACE_MS) {
-    return;
-  }
-
-  // ===== SIMON MODE =====
-  if (currentMode == MODE_SIMON) {
-    if (simonChordPos >= simonChordCount) return;
-
-    SimonChord &ch = simonChords[simonChordPos];
-
-    bool valid = false;
-    for (int i = 0; i < ch.count; i++) {
-      if (ch.notes[i] == note) {
-        valid = true;
-        break;
-      }
-    }
-
-    if (!valid) {
-      Led_noteOn(note, 0xFF0000);
-      g_segmentHadMistake = true;
-      return;
-    }
-
-    chordPressed[note] = true;
-    Led_noteOn(note, 0x00FF00);
-
-    bool complete = true;
-    for (int i = 0; i < ch.count; i++) {
-      if (!chordPressed[ch.notes[i]]) {
-        complete = false;
-        break;
-      }
-    }
-
-    if (complete) {
-      simonChordPos++;
-      memset(chordPressed, 0, sizeof(chordPressed));
-    }
-    return;
-  }
-
   // ===== MEMORIZE MODE =====
-  if (isLearningMode) {
+  if (isLearningMode || currentMode == MODE_SIMON) {
     if (notesToPlay[note]) {
       notesPressed[note] = true;
       noteStartTime[note] = millis();
@@ -305,12 +261,16 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
 }
 
 
-// --- PRACTICE (Interactive) ---
-static void practiceSegment(const String& path, uint64_t segStart, uint64_t segEnd) {
+// =====================================================
+// SHARED PRACTICE (MEMORIZE + SIMON)
+// =====================================================
+
+static void practiceSegment(const String& path, uint64_t segStart, uint64_t segEnd, bool isSimon) {
   MidiParser midi;
   if (!midi.open(path)) return;
 
   resetLearningState();
+  flushMidiInput(MIDI_FLUSH_MS);
   currentMode = MODE_LEARN;
   g_ignoreUserInput = false;
   isLearningMode = true;
@@ -356,9 +316,9 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
         uint64_t waitStart = micros();
         while (!stopRequested && areAnyNotesUnsatisfied()) {
           checkMidi();
-          // verifyNoteHolds(stepMs);
           verifyNoteHolds(1);
           FirebaseControl_checkStop();
+          if (isSimon && g_segmentHadMistake) break;
           delay(5);
         }
         startUS += (micros() - waitStart);
@@ -367,13 +327,6 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
 
       globalTimeUS += stepUS;
       globalTicks = absTicks;
-
-      // while (!stopRequested && (int64_t)(startUS + globalTimeUS - micros()) > 0) {
-      //   checkMidi();
-      //   verifyNoteHolds(stepMs);
-      //   FirebaseControl_checkStop();
-      //   delay(1);
-      // }
     }
 
     if (ev.type == MIDI_NOTE_ON) {
@@ -382,9 +335,15 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
       notesSatisfied[ev.note] = false;
 
       uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
-      Led_noteOn(ev.note, color);
+      if (!isSimon) {
+        Led_noteOn(ev.note, color);
+      }
+      // Led_noteOn(ev.note, color);
     } else if (ev.type == MIDI_NOTE_OFF) {
       notesToPlay[ev.note] = false;
+      if (!isSimon) {
+        if (notesSatisfied[ev.note]) Led_noteOff(ev.note);
+      }
       if (notesSatisfied[ev.note]) Led_noteOff(ev.note);
       notesSatisfied[ev.note] = false;
     } else if (ev.type == MIDI_TEMPO) {
@@ -401,90 +360,6 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
   Led_clear();
   isLearningMode = false;
   midi.close();
-}
-
-// =====================================================
-// SIMON PRACTICE (CHORDS + METRONOME)
-// =====================================================
-
-static void practiceSimon(const String& path, int uptoSegment) {
-  resetSimonState();
-  currentMode = MODE_SIMON;
-  g_ignoreUserInput = false;
-
-  // start grace window
-  g_practiceStartMs = millis();
-
-  MidiParser midi;
-  if (!midi.open(path)) return;
-
-  uint32_t tempoUS = 500000; // default tempo
-  uint32_t tempoMetro = 500000;
-  uint64_t startTick = segments[0].startTick;
-  uint64_t endTick   = segments[uptoSegment].endTick;
-
-  MidiEvent ev;
-  uint64_t absTicks = 0;
-  uint64_t lastTick = (uint64_t)-1;
-
-  // Seek to start + capture tempo
-  while (midi.nextEvent(ev, absTicks) && absTicks < startTick) {
-    if (ev.type == MIDI_TEMPO) {
-      tempoUS = ev.tempoUS;
-    }
-  }
-
-  tempoMetro = tempoUS;
-
-  // Build Simon chords
-  while (midi.nextEvent(ev, absTicks) && absTicks < endTick) {
-    if (ev.type == MIDI_TEMPO) {
-      tempoUS = ev.tempoUS;
-    }
-
-    if (ev.type == MIDI_NOTE_ON && ev.velocity > 0) {
-      if (absTicks != lastTick) {
-        simonChords[simonChordCount].count = 0;
-        lastTick = absTicks;
-        simonChordCount++;
-        if (simonChordCount >= MAX_SIMON_CHORDS) break;
-      }
-
-      SimonChord &ch = simonChords[simonChordCount - 1];
-      if (ch.count < MAX_CHORD_NOTES) {
-        ch.notes[ch.count++] = ev.note;
-      }
-    }
-  }
-
-  midi.close();
-
-    // 🎵 START METRONOME (Simon Practice)
-  if (g_metronomeEnabled) {
-    Serial.println("⏰ Simon practice metronome ON");
-    Audio_setMetronomeConfig(tempoMetro, 1.0f);
-  } else {
-    Audio_setMetronomeConfig(0, 0);
-  }
-
-  // ---- USER INTERACTION LOOP ----
-  while (!stopRequested) {
-    checkMidi();
-    FirebaseControl_checkStop();
-
-    if (g_segmentHadMistake) {
-      break;
-    }
-
-    if (simonChordPos >= simonChordCount) {
-      break;
-    }
-
-    delay(2);
-  }
-
-  // 🛑 STOP METRONOME
-  Audio_setMetronomeConfig(0, 0);
 }
 
 
@@ -593,10 +468,12 @@ void Player_playSong(const String &path) {
         resetUserInputState();
 
         // PRACTICE
-        practiceSimon(path, r);
+        // practiceSimon(path, r);
+        practiceSegment(path, segments[0].startTick, segments[r].endTick, true);
 
         if (!g_segmentHadMistake) break;
-        delay(800); // retry same round
+        Serial.println("⚠️ Mistakes made. Replaying...");
+        Audio_playEffect("/feedback/try_again.wav");
       }
     }
   }
@@ -620,7 +497,7 @@ void Player_playSong(const String &path) {
         if (stopRequested) break;
         
         while (!stopRequested) {
-          practiceSegment(path, segments[s].startTick, segments[s].endTick);
+          practiceSegment(path, segments[s].startTick, segments[s].endTick, false);
           if (stopRequested) break;
 
           if (!g_segmentHadMistake) {
