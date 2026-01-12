@@ -1,21 +1,26 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import '../widgets/footer/bottom_navigation_bar.dart';
-import '../services/auth_service.dart';
 
+import '../services/auth_service.dart';
+import '../services/stats_service.dart';
+import '../widgets/footer/bottom_navigation_bar.dart';
+
+// =====================
+// User Screen
+// =====================
 class UserScreen extends StatelessWidget {
   const UserScreen({super.key});
 
   static const LinearGradient _bgGradient = LinearGradient(
-  begin: Alignment.topCenter,
-  end: Alignment.bottomCenter,
-  colors: [
-    Color(0xFFB3E5FC), // תכלת בהיר
-    Color(0xFF1E88E5), // כחול
-    Color(0xFF0D1B3D), // כחול כהה מאוד
-  ],
-);
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+      Color(0xFFB3E5FC), // light blue
+      Color(0xFF1E88E5), // blue
+      Color(0xFF0D1B3D), // dark blue
+    ],
+  );
 
   // ===== Cards/UI palette =====
   static const Color _cardDark = Color(0xFF161823);
@@ -30,15 +35,10 @@ class UserScreen extends StatelessWidget {
       barrierDismissible: true,
       builder: (ctx) => AlertDialog(
         backgroundColor: _cardDark,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text(
           'Log out?',
-          style: TextStyle(
-            color: Colors.white,
-            fontWeight: FontWeight.w800,
-          ),
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
         ),
         content: const Text(
           'Are you sure you want to log out?',
@@ -95,6 +95,7 @@ class UserScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
+
     if (user == null) {
       return Scaffold(
         body: Container(
@@ -105,14 +106,17 @@ class UserScreen extends StatelessWidget {
             ),
           ),
         ),
+        bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 2),
       );
     }
+
+    // ✅ IMPORTANT: ensure stats doc exists (otherwise you'll see 0s)
+    StatsService(FirebaseFirestore.instance).ensureGeneralStats(user.uid);
 
     final userRef = FirebaseFirestore.instance.collection('users').doc(user.uid);
     final statsRef = userRef.collection('stats').doc('general');
 
     return Scaffold(
-      // ✅ ONE background for the whole page
       body: Container(
         decoration: const BoxDecoration(gradient: _bgGradient),
         child: SafeArea(
@@ -137,11 +141,7 @@ class UserScreen extends StatelessWidget {
                         ),
                         const SizedBox(width: 8),
                         IconButton(
-                          icon: const Icon(
-                            Icons.logout,
-                            color: Colors.black,
-                            size: 30,
-                          ),
+                          icon: const Icon(Icons.logout, color: Colors.black, size: 30),
                           padding: EdgeInsets.zero,
                           constraints: const BoxConstraints(),
                           tooltip: 'Log out',
@@ -201,7 +201,7 @@ class UserScreen extends StatelessWidget {
                             children: [
                               _TopHeader(
                                 displayName: displayName,
-                                 subtitle: '',
+                                subtitle: '',
                                 learnedSongsCount: learnedSongsCount,
                                 currentStreakDays: currentStreakDays,
                                 hardLearnedSongsCount: hardLearnedSongsCount,
@@ -244,14 +244,13 @@ class UserScreen extends StatelessWidget {
           ),
         ),
       ),
-
       bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 2),
     );
   }
 }
 
 // =====================
-// TOP HEADER (NO background / NO gradient here!)
+// TOP HEADER
 // =====================
 class _TopHeader extends StatelessWidget {
   const _TopHeader({
@@ -291,12 +290,10 @@ class _TopHeader extends StatelessWidget {
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // ✅ Spacer only: lets the page gradient show behind it
           SizedBox(
             width: double.infinity,
             height: headerTopHeight + (estimatedCardHeight / 2),
           ),
-
           Positioned(
             left: 16,
             right: 16,
@@ -343,24 +340,17 @@ class _TopHeader extends StatelessWidget {
                   const SizedBox(height: 18),
                   Row(
                     children: [
-                      Expanded(
-                        child: _TopMiniStatDark(label: 'Played', value: '$totalPlaysCount'),
-                      ),
+                      Expanded(child: _TopMiniStatDark(label: 'Played', value: '$totalPlaysCount')),
                       _divider(),
-                      Expanded(
-                        child: _TopMiniStatDark(label: 'Streak', value: '$currentStreakDays'),
-                      ),
+                      Expanded(child: _TopMiniStatDark(label: 'Streak', value: '$currentStreakDays')),
                       _divider(),
-                      Expanded(
-                        child: _TopMiniStatDark(label: 'Hard', value: '$hardLearnedSongsCount'),
-                      ),
+                      Expanded(child: _TopMiniStatDark(label: 'Hard', value: '$hardLearnedSongsCount')),
                     ],
                   ),
                 ],
               ),
             ),
           ),
-
           Positioned(
             top: avatarTop,
             left: 0,
@@ -422,20 +412,12 @@ class _TopMiniStatDark extends StatelessWidget {
       children: [
         Text(
           value,
-          style: const TextStyle(
-            fontSize: 24,
-            fontWeight: FontWeight.w800,
-            color: Colors.white,
-          ),
+          style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w800, color: Colors.white),
         ),
         const SizedBox(height: 4),
         Text(
           label,
-          style: const TextStyle(
-            fontSize: 16,
-            color: _textSecondary,
-            fontWeight: FontWeight.w600,
-          ),
+          style: const TextStyle(fontSize: 16, color: _textSecondary, fontWeight: FontWeight.w600),
         ),
       ],
     );

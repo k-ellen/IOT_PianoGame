@@ -21,12 +21,10 @@ class AuthGate extends StatelessWidget {
           );
         }
 
-        // ❗ לא מחובר → מסך התחלה/התחברות
         if (!snapshot.hasData) {
           return const WelcomeScreen();
         }
 
-        // ✅ מחובר → דואגים לסטטיסטיקות ואז נכנסים לחיפוש
         final user = snapshot.data!;
         return FutureBuilder(
           future: StatsService(FirebaseFirestore.instance)

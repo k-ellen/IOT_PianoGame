@@ -259,13 +259,32 @@ class _SongScreenState extends State<SongScreen> {
       data["ownerSongTitle"] = widget.title;
       data["startedAt"] = DateTime.now().millisecondsSinceEpoch;
 
-      // optional debug string:
       data["uiMode"] = _mode?.name ?? "";
 
       return rtdb.Transaction.success(data);
     });
 
     return tr.committed;
+  }
+
+  // ===================== STOP + RESET UI (circle back to normal) =====================
+  Future<void> _stopPlaybackAndResetUI({bool clearMode = true}) async {
+    await sendPlaybackCommand(false, _currentStoragePath);
+    await _clearOwnerFields();
+    await _disarmOnDisconnect();
+
+    if (!mounted) return;
+
+    if (clearMode) {
+      setState(() => _mode = null);
+    }
+
+    // optional cleanup so RTDB won't show old UI mode
+    await _playRef.update({
+      "status": "stopped",
+      if (clearMode) "playMode": -1,
+      if (clearMode) "uiMode": "",
+    });
   }
 
   // ---------------- dialogs ----------------
@@ -296,6 +315,38 @@ class _SongScreenState extends State<SongScreen> {
     );
   }
 
+  Future<bool> _showStopSongDialog() async {
+    final bool? stop = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        title: const Text("Stop playing?"),
+        content: const Text("Do you want to stop the song?"),
+        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        titleTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 25,
+          fontWeight: FontWeight.bold,
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Stop"),
+          ),
+        ],
+      ),
+    );
+
+    return stop == true;
+  }
+
   Future<void> _showExitDialog() async {
     final bool? shouldLeave = await showDialog<bool>(
       context: context,
@@ -319,9 +370,7 @@ class _SongScreenState extends State<SongScreen> {
           TextButton(
             style: TextButton.styleFrom(foregroundColor: Colors.white),
             onPressed: () async {
-              await sendPlaybackCommand(false, _currentStoragePath);
-              await _clearOwnerFields();
-              await _disarmOnDisconnect();
+              await _stopPlaybackAndResetUI(clearMode: true);
               if (context.mounted) Navigator.pop(context, true);
             },
             child: const Text("Stop & Leave"),
@@ -489,61 +538,58 @@ class _SongScreenState extends State<SongScreen> {
     return ok == true;
   }
 
-Future<void> _showMetronomeDialog() async {
-  bool localOn = _metronomeOn;
+  Future<void> _showMetronomeDialog() async {
+    bool localOn = _metronomeOn;
 
-  final bool? ok = await showDialog<bool>(
-    context: context,
-    barrierDismissible: true,
-    builder: (context) {
-      return StatefulBuilder(
-        builder: (context, setLocal) {
-          return AlertDialog(
-            backgroundColor: const Color.fromARGB(255, 23, 23, 23),
-            title: const Text(
-              "Metronome",
-              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-            ),
-            content: SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: localOn,
-              onChanged: (v) => setLocal(() => localOn = v),
-              activeColor: Colors.blueAccent,
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocal) {
+            return AlertDialog(
+              backgroundColor: const Color.fromARGB(255, 23, 23, 23),
               title: const Text(
-                "Enable metronome",
-                style: TextStyle(color: Colors.white),
+                "Metronome",
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
               ),
-              subtitle: Text(
-                localOn ? "On" : "Off",
-                style: const TextStyle(color: Colors.white70),
+              content: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: localOn,
+                onChanged: (v) => setLocal(() => localOn = v),
+                activeColor: Colors.blueAccent,
+                title: const Text(
+                  "Enable metronome",
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  localOn ? "On" : "Off",
+                  style: const TextStyle(color: Colors.white70),
+                ),
               ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text("Cancel", style: TextStyle(color: Colors.white)),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text("OK", style: TextStyle(color: Colors.white)),
-              ),
-            ],
-          );
-        },
-      );
-    },
-  );
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child:
+                      const Text("Cancel", style: TextStyle(color: Colors.white)),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text("OK", style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
 
-  if (ok == true) {
-    setState(() => _metronomeOn = localOn);
-
-    // עדכון RTDB
-    await _playRef.update({
-      "metronome": _metronomeOn,
-    });
+    if (ok == true) {
+      setState(() => _metronomeOn = localOn);
+      await _playRef.update({"metronome": _metronomeOn});
+    }
   }
-}
-
 
   // ---------------- navigation ----------------
   Future<void> _handleNavLeave(int index) async {
@@ -637,9 +683,7 @@ Future<void> _showMetronomeDialog() async {
     final bool ok = await _showStopBeforeChangeDialog();
     if (!ok) return;
 
-    await sendPlaybackCommand(false, _currentStoragePath);
-    await _clearOwnerFields();
-    await _disarmOnDisconnect();
+    await _stopPlaybackAndResetUI(clearMode: true);
 
     if (!mounted) return;
 
@@ -663,14 +707,11 @@ Future<void> _showMetronomeDialog() async {
     }
 
     if (_isPlayingMine) {
-      await sendPlaybackCommand(false, path);
-      await _clearOwnerFields();
-      await _disarmOnDisconnect();
+      await _stopPlaybackAndResetUI(clearMode: true);
 
       final User? u = FirebaseAuth.instance.currentUser;
       if (u != null) {
-        await StatsService(FirebaseFirestore.instance)
-            .registerPracticeDay(u.uid);
+        await StatsService(FirebaseFirestore.instance).registerPracticeDay(u.uid);
       }
       return;
     }
@@ -696,24 +737,35 @@ Future<void> _showMetronomeDialog() async {
   // Circles: mode + play
   // =====================
   Future<void> _onModeCirclePressed(_PlayMode m) async {
-    // here circles are disabled in UI when someone else plays,
-    // but keep this guard anyway
     if (_someoneElsePlaying) return;
 
-    if (_isPlayingMine) {
+    _recomputeStoragePath();
+
+    // 1) אם לוחצים שוב על אותו עיגול בזמן נגינה -> לשאול אם לעצור
+    if (_isPlayingMine && _mode == m) {
+      final bool stop = await _showStopSongDialog();
+      if (!stop) return;
+
+      await _stopPlaybackAndResetUI(clearMode: true);
+
+      final User? u = FirebaseAuth.instance.currentUser;
+      if (u != null) {
+        await StatsService(FirebaseFirestore.instance).registerPracticeDay(u.uid);
+      }
+      return;
+    }
+
+    // 2) אם מתנגן וצריך לעבור למוד אחר -> Stop & Change ואז לנגן חדש
+    if (_isPlayingMine && _mode != m) {
       final bool ok = await _showStopBeforeChangeDialog();
       if (!ok) return;
 
-      await sendPlaybackCommand(false, _currentStoragePath);
-      await _clearOwnerFields();
-      await _disarmOnDisconnect();
-      if (!mounted) return;
+      await _stopPlaybackAndResetUI(clearMode: true);
     }
 
     if (!mounted) return;
     setState(() => _mode = m);
 
-    // no more "choose speed" here (speed is chosen from the Speed button)
     await _playRef.update({
       "playMode": _playModeToInt(_mode),
       "uiMode": _mode?.name ?? "",
@@ -774,8 +826,7 @@ Future<void> _showMetronomeDialog() async {
             }
 
             final Map<String, dynamic> data =
-                snap.data!.data() as Map<String, dynamic>? ??
-                    <String, dynamic>{};
+                snap.data!.data() as Map<String, dynamic>? ?? <String, dynamic>{};
             final Map<String, dynamic> diffs =
                 data['difficulties'] as Map<String, dynamic>? ??
                     <String, dynamic>{};
@@ -799,8 +850,8 @@ Future<void> _showMetronomeDialog() async {
               }
             }
 
-            final List<String> diffLabels =
-                rawKeysByDiffLabel.keys.toList()..sort();
+            final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()
+              ..sort();
 
             if (diffLabels.isEmpty && unknownRawDiffKeys.isNotEmpty) {
               rawKeysByDiffLabel['UNKNOWN'] = unknownRawDiffKeys;
@@ -877,13 +928,16 @@ Future<void> _showMetronomeDialog() async {
             }
 
             if (!showHandsSelector) {
-              if (hasTwoHands && !hasOneHand) _handsChoice = _HandsChoice.twoHands;
-              if (hasOneHand && !hasTwoHands) _handsChoice = _HandsChoice.oneHand;
+              if (hasTwoHands && !hasOneHand) {
+                _handsChoice = _HandsChoice.twoHands;
+              }
+              if (hasOneHand && !hasTwoHands) {
+                _handsChoice = _HandsChoice.oneHand;
+              }
             }
 
             _recomputeStoragePath();
             final bool canPlay = _currentStoragePath.isNotEmpty;
-
             final bool circlesEnabled = canPlay && !_someoneElsePlaying;
 
             final double screenHeight = MediaQuery.of(context).size.height;
@@ -903,8 +957,11 @@ Future<void> _showMetronomeDialog() async {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Center(
-                      child: Icon(Icons.music_note,
-                          size: 112, color: Colors.black),
+                      child: Icon(
+                        Icons.music_note,
+                        size: 112,
+                        color: Colors.black,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 20),
@@ -934,7 +991,7 @@ Future<void> _showMetronomeDialog() async {
                   ),
                   const SizedBox(height: 22),
 
-                  // Difficulty dropdown (same behavior as now)
+                  // Difficulty dropdown
                   if (showDifficultySelector) ...[
                     _LabeledBox(
                       label: "Difficulty:",
@@ -953,8 +1010,7 @@ Future<void> _showMetronomeDialog() async {
                   ],
 
                   // =========================
-                  // NEW: row of settings buttons
-                  // speed / hands / metronome / segments
+                  // Settings row
                   // =========================
                   _SettingsRow(
                     speed: _chosenSpeed,
@@ -966,9 +1022,7 @@ Future<void> _showMetronomeDialog() async {
                       if (_isPlayingMine) {
                         final bool ok = await _showStopBeforeChangeDialog();
                         if (!ok) return;
-                        await sendPlaybackCommand(false, _currentStoragePath);
-                        await _clearOwnerFields();
-                        await _disarmOnDisconnect();
+                        await _stopPlaybackAndResetUI(clearMode: true);
                       }
                       await _showChooseSpeedDialog();
                       await _playRef.update({"speed": _chosenSpeed});
@@ -976,9 +1030,10 @@ Future<void> _showMetronomeDialog() async {
                     onHandsTap: showHandsSelector
                         ? () async {
                             await _attemptChangeWhilePlaying(() {
-                              _handsChoice = (_handsChoice == _HandsChoice.oneHand)
-                                  ? _HandsChoice.twoHands
-                                  : _HandsChoice.oneHand;
+                              _handsChoice =
+                                  (_handsChoice == _HandsChoice.oneHand)
+                                      ? _HandsChoice.twoHands
+                                      : _HandsChoice.oneHand;
                             });
                           }
                         : null,
@@ -986,9 +1041,7 @@ Future<void> _showMetronomeDialog() async {
                       if (_isPlayingMine) {
                         final bool ok = await _showStopBeforeChangeDialog();
                         if (!ok) return;
-                        await sendPlaybackCommand(false, _currentStoragePath);
-                        await _clearOwnerFields();
-                        await _disarmOnDisconnect();
+                        await _stopPlaybackAndResetUI(clearMode: true);
                       }
                       await _showMetronomeDialog();
                     },
@@ -996,9 +1049,7 @@ Future<void> _showMetronomeDialog() async {
                       if (_isPlayingMine) {
                         final bool ok = await _showStopBeforeChangeDialog();
                         if (!ok) return;
-                        await sendPlaybackCommand(false, _currentStoragePath);
-                        await _clearOwnerFields();
-                        await _disarmOnDisconnect();
+                        await _stopPlaybackAndResetUI(clearMode: true);
                       }
                       final bool ok = await _showChooseSegmentsDialog();
                       if (!ok) return;
@@ -1006,13 +1057,10 @@ Future<void> _showMetronomeDialog() async {
                     },
                   ),
 
-
-                  
                   const SizedBox(height: 55),
 
                   // =========================
-                  // Circles (bigger + bigger text)
-                  // Disabled when someone else plays
+                  // Circles
                   // =========================
                   Opacity(
                     opacity: circlesEnabled ? 1.0 : 0.45,
@@ -1021,7 +1069,8 @@ Future<void> _showMetronomeDialog() async {
                       child: _ModeCirclesRow(
                         selected: _mode,
                         isPlayingMine: _isPlayingMine,
-                        onMemorize: () => _onModeCirclePressed(_PlayMode.memorize),
+                        onMemorize: () =>
+                            _onModeCirclePressed(_PlayMode.memorize),
                         onFollow: () => _onModeCirclePressed(_PlayMode.follow),
                         onSimon: () => _onModeCirclePressed(_PlayMode.simon),
                       ),
@@ -1093,20 +1142,18 @@ class _SettingsRow extends StatelessWidget {
             icon: Icons.speed,
             onTap: onSpeedTap,
           ),
-          
-
-
-
         ),
         const SizedBox(width: 10),
         Expanded(
           child: _SettingPill(
             title: "Hands",
             valueText: showHands ? " " : "—",
-            icon: Icons.pan_tool, 
+            icon: Icons.pan_tool,
             onTap: showHands ? onHandsTap : null,
             disabled: !showHands,
-            customIcon: showHands ? _HandsIcon(twoHands: hands == _HandsChoice.twoHands) : null,
+            customIcon: showHands
+                ? _HandsIcon(twoHands: hands == _HandsChoice.twoHands)
+                : null,
           ),
         ),
         const SizedBox(width: 10),
@@ -1114,14 +1161,14 @@ class _SettingsRow extends StatelessWidget {
           child: _SettingPill(
             title: "Metronome",
             valueText: metronomeOn ? "On" : "Off",
-            icon: Icons.music_note, // if you have a metronome icon, swap it
+            icon: Icons.music_note,
             onTap: onMetronomeTap,
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: _SettingPill(
-            title: "Seg",
+            title: "segments",
             valueText: "$segments",
             icon: Icons.view_week,
             onTap: onSegmentsTap,
@@ -1134,12 +1181,11 @@ class _SettingsRow extends StatelessWidget {
 
 class _HandsIcon extends StatelessWidget {
   const _HandsIcon({required this.twoHands});
-
   final bool twoHands;
 
   @override
   Widget build(BuildContext context) {
-    const IconData handIcon = Icons.front_hand_rounded; 
+    const IconData handIcon = Icons.front_hand_rounded;
 
     if (!twoHands) {
       return const Icon(handIcon, color: Colors.white, size: 22);
@@ -1156,8 +1202,6 @@ class _HandsIcon extends StatelessWidget {
   }
 }
 
-
-
 class _SettingPill extends StatelessWidget {
   const _SettingPill({
     required this.title,
@@ -1166,7 +1210,7 @@ class _SettingPill extends StatelessWidget {
     required this.onTap,
     this.disabled = false,
     this.showX = false,
-    this.customIcon, 
+    this.customIcon,
   });
 
   final String title;
@@ -1187,7 +1231,7 @@ class _SettingPill extends StatelessWidget {
         onTap: enabled ? onTap : null,
         borderRadius: BorderRadius.circular(14),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
           decoration: BoxDecoration(
             color: const Color(0xFF2A2A2A),
             borderRadius: BorderRadius.circular(14),
@@ -1197,35 +1241,39 @@ class _SettingPill extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Stack(
-              alignment: Alignment.center,
-              clipBehavior: Clip.none,
-              children: [
-                SizedBox(
-                  height: 22,
-                  child: Center(
-                    child: customIcon ?? Icon(icon, color: Colors.white, size: 22),
-                  ),
-                ),
-                if (showX)
-                  Positioned(
-                    right: -2,
-                    top: -2,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.redAccent,
-                      ),
-                      child: const Icon(Icons.close, size: 12, color: Colors.white),
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  SizedBox(
+                    height: 22,
+                    child: Center(
+                      child:
+                          customIcon ?? Icon(icon, color: Colors.white, size: 22),
                     ),
                   ),
-              ],
-            ),
-
+                  if (showX)
+                    Positioned(
+                      right: -2,
+                      top: -2,
+                      child: Container(
+                        padding: const EdgeInsets.all(2),
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Colors.redAccent,
+                        ),
+                        child: const Icon(
+                          Icons.close,
+                          size: 12,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
               const SizedBox(height: 6),
               Text(
                 title,
-                style: const TextStyle(color: Colors.white70, fontSize: 11),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
                 overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
@@ -1324,7 +1372,7 @@ class _GreenModeCircle extends StatelessWidget {
       borderRadius: BorderRadius.circular(999),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
-        height: 118, // bigger
+        height: 118,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: fill,
@@ -1344,7 +1392,7 @@ class _GreenModeCircle extends StatelessWidget {
               Icon(
                 isPlayingMine ? Icons.stop_circle : Icons.play_circle_fill,
                 color: Colors.black,
-                size: 42, // bigger icon
+                size: 42,
               ),
               const SizedBox(height: 8),
               Text(
@@ -1353,7 +1401,7 @@ class _GreenModeCircle extends StatelessWidget {
                 style: const TextStyle(
                   color: Colors.black,
                   fontWeight: FontWeight.w900,
-                  fontSize: 14, // bigger text
+                  fontSize: 14,
                   height: 1.05,
                 ),
               ),
@@ -1374,10 +1422,12 @@ class _LabeledBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // label currently not shown in your old UI; keep minimal (as you asked: "בדיוק כמו עכשיו")
-      child,
-    ]);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        child,
+      ],
+    );
   }
 }
 
