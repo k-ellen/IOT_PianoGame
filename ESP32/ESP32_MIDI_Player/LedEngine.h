@@ -9,7 +9,6 @@ void Led_clear();
 
 void setLedBuffer(int note, uint32_t color);
 
-void Led_animateStartup();
-
-// turn off all LEDs immediately
+void Led_animateRainbow();
+// ✅ NEW: turn off all LEDs immediately
 void Led_clearAll();

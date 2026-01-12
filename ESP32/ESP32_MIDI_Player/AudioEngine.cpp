@@ -37,6 +37,8 @@ static constexpr float ATTACK_MS  = 2.0f;
 static constexpr float DECAY_MS   = 80.0f;
 static constexpr float TAIL_MS    = 1800.0f; 
 static constexpr float RELEASE_MS = 250.0f;
+
+// Levels
 static constexpr float METRO_DECAY_MS = 180.0f;
 
 static constexpr float PEAK_LEVEL = 1.0f;
@@ -47,7 +49,7 @@ static constexpr uint32_t ATTACK_S  = SAMPLE_RATE * ATTACK_MS  / 1000.0f;
 static constexpr uint32_t DECAY_S   = SAMPLE_RATE * DECAY_MS   / 1000.0f;
 static constexpr uint32_t TAIL_S    = SAMPLE_RATE * TAIL_MS    / 1000.0f;
 static constexpr uint32_t RELEASE_S = SAMPLE_RATE * RELEASE_MS / 1000.0f;
-static constexpr uint32_t METRO_DECAY_S = SAMPLE_RATE * METRO_DECAY_MS / 1000.0f;
+
 
 // =======================
 // FAST SINE 
@@ -94,8 +96,7 @@ enum EnvStage : uint8_t {
   ENV_ATTACK,
   ENV_DECAY,
   ENV_TAIL,
-  ENV_RELEASE,
-  ENV_METRO_DECAY
+  ENV_RELEASE
 };
 
 struct Voice {
@@ -190,6 +191,8 @@ static inline void envStep(Voice &v) {
 
 static void audioTask(void*) {
   int16_t outBuf[OUT_FRAMES * 2];
+
+  // Local noise base so different voices don't sync
   uint32_t globalNoise = 0x12345678u;
 
   while (true) {
@@ -246,9 +249,14 @@ static void audioTask(void*) {
             }
             mix += (osc + noise) * local.env * local.velocity * polyGain;
           }
+        }
       }
+
+      // master gain + soft saturation
       mix *= masterVolume;
-      if (mix > 1.2f) mix = 1.2f;
+
+      // soft clip
+      if (mix > 1.2f)  mix = 1.2f;
       if (mix < -1.2f) mix = -1.2f;
       mix = mix / (1.0f + fabsf(mix));
 

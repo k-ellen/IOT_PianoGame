@@ -5,7 +5,8 @@ enum PlayMode {
   MODE_SONG_AUDIO,
   MODE_SONG_METRONOME,
   MODE_LEARN, // 0
-  MODE_FOLLOW // 1
+  MODE_FOLLOW, // 1
+  MODE_SIMON
 };
 
 // Current playback mode
