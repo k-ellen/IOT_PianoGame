@@ -1,6 +1,12 @@
 #pragma once
 #include <Arduino.h>
 
+// Global flag to control metronome
+extern bool g_metronomeEnabled; 
+
+// Call this from your main.ino when Firebase updates the setting
+void Player_setMetronome(bool enabled);
+
 // Plays a song twice:
 // 1) LEDs + synth audio
 // 2) LEDs + metronome

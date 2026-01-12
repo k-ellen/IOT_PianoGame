@@ -10,6 +10,8 @@
 #include "addons/TokenHelper.h"
 #include "addons/RTDBHelper.h"
 
+#include "Player.h"
+
 static FirebaseData fbdo;
 static FirebaseAuth auth;
 static FirebaseConfig config;
@@ -62,7 +64,7 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
   status.trim();
   status.toLowerCase();
 
-  // 🔴 STOP HANDLING
+  // stop handling
   if (status != "playing") {
     stopRequested = true;
     return false;
@@ -105,6 +107,14 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
     }
   } else {
     currentMode = MODE_LEARN; // Default
+  }
+
+  if (Firebase.RTDB.getBool(&fbdo, "/esp32API/playCommand/metronome")) {
+      bool metaOn = fbdo.boolData();
+      Player_setMetronome(metaOn);
+  } else {
+      // Default to OFF if missing, or ON if you prefer
+      Player_setMetronome(false); 
   }
 
   return true;

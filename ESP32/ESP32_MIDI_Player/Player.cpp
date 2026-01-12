@@ -16,6 +16,12 @@ static bool g_segmentHadMistake = false;
 
 static Segment segments[MAX_SEGMENTS];
 float playbackSpeed = 1.0f;
+bool g_metronomeEnabled = false;
+
+void Player_setMetronome(bool enabled) {
+    g_metronomeEnabled = enabled;
+    Serial.printf("⏰ Metronome set to: %s\n", enabled ? "ON" : "OFF");
+}
 
 // Grace window for practice start (ignore stray buffered/early presses)
 static unsigned long g_practiceStartMs = 0;
@@ -230,6 +236,13 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
     if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
   }
 
+  // Audio_setMetronomeConfig(0, 0); // turn off for the demo
+  // if (g_metronomeEnabled) {
+  //    Audio_setMetronomeConfig(tempoUS, 1.0f);
+  // } else {
+  //    Audio_setMetronomeConfig(0, 0);
+  // }
+
   uint64_t globalTicks = segStart;
   uint64_t accUS = 0;              // 🔥 accumulated adjusted time
   uint64_t startUS = micros();
@@ -258,6 +271,11 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
     else if (ev.type == MIDI_NOTE_OFF) {
       Led_noteOff(ev.note);
       Audio_noteOff(ev.note);
+    } else if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS;
+      // if (g_metronomeEnabled) {
+      //    Audio_setMetronomeConfig(tempoUS, 1.0f);
+      // }
     }
     else if (ev.type == MIDI_TEMPO) {
       tempoUS = ev.tempoUS; // tempo changes still respected
@@ -265,6 +283,8 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
 
     if (!midi.nextEvent(ev, absTicks)) break;
   }
+
+  Audio_setMetronomeConfig(0, 0);
 
   Audio_allNotesOff();
   Led_clear();
@@ -295,11 +315,11 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
     if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
   }
 
-  // if (g_metronomeEnabled) {
-  //    Audio_setMetronomeConfig(tempoUS, 1.0f); // Always 1.0 speed for practice
-  // } else {
-  //    Audio_setMetronomeConfig(0, 0);
-  // }
+  if (g_metronomeEnabled) {
+     Audio_setMetronomeConfig(tempoUS, 1.0f); // Always 1.0 speed for practice
+  } else {
+     Audio_setMetronomeConfig(0, 0);
+  }
 
   uint64_t globalTicks = segStart;
   uint64_t globalTimeUS = 0;
@@ -358,13 +378,13 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
       notesSatisfied[ev.note] = false;
     } else if (ev.type == MIDI_TEMPO) {
       tempoUS = ev.tempoUS;
-      // if (g_metronomeEnabled) {
-      //    Audio_setMetronomeConfig(tempoUS, 1.0f);
-      // }
+      if (g_metronomeEnabled) {
+         Audio_setMetronomeConfig(tempoUS, 1.0f);
+      }
     }
   }
 
-  // Audio_setMetronomeConfig(0, 0); // turn off at the end of the segment
+  Audio_setMetronomeConfig(0, 0); // turn off at the end of the segment
 
   Audio_allNotesOff();
   Led_clear();
@@ -420,38 +440,82 @@ static void practiceSimon(const String& path, int uptoSegment) {
   }
 }
 
-// =====================================================
+// =======================
 // FOLLOW MODE
-// =====================================================
-
+// =======================
 static void playVisualSong(const String& path) {
   MidiParser midi;
   if (!midi.open(path)) return;
 
   Led_clear();
-  uint32_t tempoUS = 500000;
-  uint16_t division = midi.getDivision();
+  
+  uint32_t tempoUS = 500000; 
+  uint16_t division = midi.getDivision(); 
+  unsigned long lastStopCheck = 0;
+  
   MidiEvent ev;
   uint64_t absTicks = 0;
   uint64_t globalTicks = 0;
   uint64_t startUS = micros();
-  uint64_t accUS = 0;
+  uint64_t accumulatedDelayUS = 0; 
 
-  while (!stopRequested && midi.nextEvent(ev, absTicks)) {
-    uint64_t dt = absTicks - globalTicks;
-    if (dt) {
-      accUS += ((dt * tempoUS) / division) / playbackSpeed;
+  Serial.printf("🚀 Follow Mode: Speed %.1fx | Metronome: AUDIO ENGINE\n", playbackSpeed);
+  
+  // start metronome if enabled
+  if (g_metronomeEnabled) {
+     Audio_setMetronomeConfig(tempoUS, playbackSpeed);
+  } else {
+     Audio_setMetronomeConfig(0, 0); // Ensure it's off
+  }
+
+  bool haveEv = false;
+
+  while (!stopRequested) {
+    
+    if (!haveEv) {
+      if (!midi.nextEvent(ev, absTicks)) break; 
+      haveEv = true;
+    }
+
+    uint64_t deltaTicks = absTicks - globalTicks;
+    
+    if (deltaTicks > 0) {
+      uint64_t standardStepUS = (deltaTicks * (uint64_t)tempoUS) / (uint64_t)division;
+      uint64_t adjustedStepUS = (uint64_t)(standardStepUS / playbackSpeed);
+
+      accumulatedDelayUS += adjustedStepUS;
       globalTicks = absTicks;
-      while ((int64_t)(startUS + accUS - micros()) > 0) {
-        FirebaseControl_checkStop();
-        delay(1);
+
+      while (!stopRequested && (int64_t)(startUS + accumulatedDelayUS - micros()) > 0) {
+        // NO MANUAL METRONOME HERE ANYMORE!
+        // The Audio Task handles it in the background.
+        // checkMidi();
+        if (millis() - lastStopCheck > 100) {
+           FirebaseControl_checkStop(); 
+           lastStopCheck = millis();
+        }
+        delay(1); 
       }
     }
-    if (ev.type == MIDI_NOTE_ON)
-      Led_noteOn(ev.note, TRACK_COLORS[ev.track % MAX_TRACK_COLORS]);
-    else if (ev.type == MIDI_NOTE_OFF)
+
+    if (ev.type == MIDI_NOTE_ON) {
+      uint32_t color = TRACK_COLORS[ev.track % MAX_TRACK_COLORS];
+      Led_noteOn(ev.note, color);
+    } 
+    else if (ev.type == MIDI_NOTE_OFF) {
       Led_noteOff(ev.note);
+    } 
+    else if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS;
+      if (g_metronomeEnabled) {
+        Audio_setMetronomeConfig(tempoUS, playbackSpeed);
+      }
+    }
+    haveEv = false;
   }
+
+  // 3. STOP METRONOME
+  Audio_setMetronomeConfig(0, 0);
 
   Led_clear();
   midi.close();
@@ -493,9 +557,6 @@ void Player_playSong(const String &path) {
     for (int s = 0; s < count && !stopRequested; s++) {
       playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
 
-      flushMidiInput(MIDI_FLUSH_MS);
-      resetUserInputState();
-
       while (!stopRequested) {
         practiceSegment(path, segments[s].startTick, segments[s].endTick);
         if (!g_segmentHadMistake) break;
@@ -503,12 +564,45 @@ void Player_playSong(const String &path) {
 
         flushMidiInput(MIDI_FLUSH_MS);
         resetUserInputState();
-      }
+      
+        if (stopRequested) break;
+        
+        while (!stopRequested) {
+             practiceSegment(path, segments[s].startTick, segments[s].endTick);
+             if (stopRequested) break;
+
+             if (!g_segmentHadMistake) {
+                 Serial.println("✨ Segment Cleared!");
+                 Audio_playEffect("/feedback/continue.wav");
+                //  delay(1500); 
+                 break;
+             }
+
+             Serial.println("⚠️ Mistakes made. Replaying...");
+             Audio_playEffect("/feedback/try_again.wav");
+            //  delay(1500); 
+             playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
+        }
     }
   }
 
   Audio_allNotesOff();
   Led_clear();
+
+  // Drain the MIDI buffer so any keys pressed during "Success.wav" 
+  // do not immediately light up as Free Play notes.
+  g_ignoreUserInput = true; 
+  unsigned long flushStart = millis();
+  while (millis() - flushStart < 100) { 
+     checkMidi(); 
+  }
+  g_ignoreUserInput = false;
+
   currentMode = MODE_FREE;
-  if (!stopRequested) FirebaseControl_setStatus("stopped");
+  Serial.println("🏁 Song finished!");
+  // If finished naturally, update App status
+  if (!stopRequested) {
+    FirebaseControl_setStatus("stopped");
+    Audio_playEffect("/feedback/finished.wav");
+  }
 }
