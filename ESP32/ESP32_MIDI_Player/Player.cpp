@@ -553,36 +553,41 @@ void Player_playSong(const String &path) {
     }
   }
   else {
-    int count = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 2);
-    for (int s = 0; s < count && !stopRequested; s++) {
-      playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
+    Serial.println("📂 Mode: MEMORIZE (Interactive)");
+    Serial.println("📂 Building segments by BARS...");
 
-      while (!stopRequested) {
-        practiceSegment(path, segments[s].startTick, segments[s].endTick);
-        if (!g_segmentHadMistake) break;
+    int segmentCount = buildSegmentsByBars(path, segments, MAX_SEGMENTS, 2);
+
+    if (segmentCount <= 0) {
+      Serial.println("❌ Segment build failed.");
+      return;
+    }
+    
+    // Loop through segments
+    for (int s = 0; s < segmentCount && !stopRequested; s++) {
+        Serial.printf("▶ Learning Segment %d/%d\n", s + 1, segmentCount);
+
+        // This runs at normal speed (logic unchanged)
         playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
-
-        flushMidiInput(MIDI_FLUSH_MS);
-        resetUserInputState();
-      
         if (stopRequested) break;
         
         while (!stopRequested) {
-             practiceSegment(path, segments[s].startTick, segments[s].endTick);
-             if (stopRequested) break;
+          practiceSegment(path, segments[s].startTick, segments[s].endTick);
+          if (stopRequested) break;
 
-             if (!g_segmentHadMistake) {
-                 Serial.println("✨ Segment Cleared!");
-                 Audio_playEffect("/feedback/continue.wav");
-                //  delay(1500); 
-                 break;
-             }
-
-             Serial.println("⚠️ Mistakes made. Replaying...");
-             Audio_playEffect("/feedback/try_again.wav");
+          if (!g_segmentHadMistake) {
+              Serial.println("✨ Segment Cleared!");
+              Audio_playEffect("/feedback/continue.wav");
             //  delay(1500); 
-             playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
+              break;
+          }
+
+          Serial.println("⚠️ Mistakes made. Replaying...");
+          Audio_playEffect("/feedback/try_again.wav");
+        //  delay(1500); 
+          playSegmentDemo(path, segments[s].startTick, segments[s].endTick);
         }
+      
     }
   }
 
