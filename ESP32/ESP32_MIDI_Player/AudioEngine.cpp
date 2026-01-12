@@ -17,7 +17,12 @@ volatile PlayMode currentMode = MODE_FREE;
 volatile bool stopRequested = false;
 
 static volatile bool audioMuted = false;
-static volatile bool synthPaused = false; // <--- The "Polite Pause" Flag
+static volatile bool synthPaused = false;
+
+// Internal Metronome State
+static volatile bool metroRunning = false;
+static volatile uint32_t metroIntervalSamples = 0;
+static volatile int32_t metroCounter = 0;
 
 // =======================
 // SYNTH TUNABLES
@@ -25,7 +30,7 @@ static volatile bool synthPaused = false; // <--- The "Polite Pause" Flag
 
 static constexpr int OUT_FRAMES = 256;
 static_assert(MAX_VOICES >= 1, "MAX_VOICES must be >= 1");
-static float masterVolume = 0.4f; //1.5f;        
+static float masterVolume = 1.0f; //1.5f;        
 static volatile uint32_t metroSamples = 0;
 
 static constexpr float ATTACK_MS  = 2.0f;
@@ -188,14 +193,26 @@ static void audioTask(void*) {
   uint32_t globalNoise = 0x12345678u;
 
   while (true) {
-    // --- CHECK PAUSE FLAG ---
+    // check pause flag
     // If paused, we yield and skip processing. 
     // This allows Audio_playEffect to take over the I2S bus safely.
     if (synthPaused) {
        vTaskDelay(5); 
        continue;      
     }
-    // ------------------------
+
+    if (metroRunning && metroIntervalSamples > 0) {
+        // We are about to process OUT_FRAMES samples.
+        // Check if the next beat falls within this block.
+        metroCounter -= OUT_FRAMES;
+        if (metroCounter <= 0) {
+            // Time to Click!
+            Audio_triggerMetronome(); // This function is safe to call here
+
+            // Reset counter (add interval)
+            metroCounter += metroIntervalSamples;
+        }
+    }
 
     for (int i = 0; i < OUT_FRAMES; i++) {
       float mix = 0.0f;
@@ -360,6 +377,22 @@ void Audio_triggerMetronome() {
   voices[slot].hammerLeft = 400; 
 
   portEXIT_CRITICAL(&voicesMux);
+}
+
+void Audio_setMetronomeConfig(uint32_t tempoUS, float speed) {
+  if (tempoUS == 0 || speed <= 0.001f) {
+    metroRunning = false;
+    return;
+  }
+
+  // Calculate how many audio samples are in one beat
+  // Formula: (SampleRate * MicrosecondsPerBeat) / (1,000,000 * Speed)
+  float samplesPerBeat = ((float)SAMPLE_RATE * (float)tempoUS) / (1000000.0f * speed);
+
+  metroIntervalSamples = (uint32_t)samplesPerBeat;
+  metroRunning = true;
+  // We don't reset metroCounter here to keep phase if tempo changes slightly,
+  // but you could set metroCounter = 0 if you want an immediate restart.
 }
 
 void Audio_allNotesOff() {
