@@ -562,8 +562,7 @@ void Player_playSong(const String &path) {
 
           if (!g_segmentHadMistake) {
               Serial.println("✨ Segment Cleared!");
-              // Audio_playEffect("/feedback/continue.wav");
-            //  delay(1500); 
+              delay(1500); 
               break;
           }
 
