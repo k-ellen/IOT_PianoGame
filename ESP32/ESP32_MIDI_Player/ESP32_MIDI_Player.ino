@@ -149,6 +149,7 @@ void setup() {
   Serial.println("🎹 Ready (FREE PLAY)");
 
   Led_animateStartup();
+  Audio_playEffect("/feedback/ready.wav");
 }
 
 // =======================

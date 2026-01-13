@@ -73,6 +73,27 @@ extern void checkMidi();
 // HELPERS
 // =====================================================
 
+static void followCountIn(uint32_t tempoUS, uint8_t firstNote) {
+  const int BEATS = 4;          // 1 bar
+  uint64_t beatUS = tempoUS;
+
+  Serial.println("⏱ Follow mode count-in (audio only)");
+
+  Audio_playEffect("/feedback/first_note.wav");
+
+  // 🎹 Preview first note
+  Led_clear();
+  if (firstNote != 255) {
+    Led_noteOn(firstNote, 0x002020); // dim preview
+  }
+
+  Audio_playEffect("/feedback/count_in.wav");
+
+  Audio_playEffect("/feedback/three_two_one.wav");
+
+  Led_clear();
+}
+
 void Player_setMemorizeBars(int bars) {
   if (bars <= 0) {
     Serial.println("⚠️ Invalid segment count from Firebase, keeping previous value");
@@ -138,14 +159,6 @@ static void resetLearningState() {
   Audio_allNotesOff();
 }
 
-// static void resetSimonState() {
-//   simonChordPos = 0;
-//   simonChordCount = 0;
-//   memset(chordPressed, 0, sizeof(chordPressed));
-//   g_segmentHadMistake = false;
-//   Led_clear();
-// }
-
 // =====================================================
 // INPUT HANDLERS
 // =====================================================
@@ -192,6 +205,7 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
   if (!midi.open(path)) return;
 
   resetLearningState();
+  
   currentMode = MODE_SONG_AUDIO;
 
   uint32_t tempoUS = 500000;
@@ -202,13 +216,6 @@ static void playSegmentDemo(const String& path, uint64_t segStart, uint64_t segE
   while (midi.nextEvent(ev, absTicks) && absTicks < segStart) {
     if (ev.type == MIDI_TEMPO) tempoUS = ev.tempoUS;
   }
-
-  // Audio_setMetronomeConfig(0, 0); // turn off for the demo
-  // if (g_metronomeEnabled) {
-  //    Audio_setMetronomeConfig(tempoUS, 1.0f);
-  // } else {
-  //    Audio_setMetronomeConfig(0, 0);
-  // }
 
   uint64_t globalTicks = segStart;
   uint64_t accUS = 0;              // 🔥 accumulated adjusted time
@@ -367,22 +374,75 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
 // FOLLOW MODE
 // =======================
 static void playVisualSong(const String& path) {
-  MidiParser midi;
-  if (!midi.open(path)) return;
+  MidiParser midi2;
+  if (!midi2.open(path)) return;
 
   Led_clear();
   
   uint32_t tempoUS = 500000; 
-  uint16_t division = midi.getDivision(); 
+  uint16_t division = midi2.getDivision(); 
   unsigned long lastStopCheck = 0;
   
-  MidiEvent ev;
+  MidiEvent ev2;
   uint64_t absTicks = 0;
+  uint64_t firstNoteTick = 0;
   uint64_t globalTicks = 0;
   uint64_t startUS = micros();
   uint64_t accumulatedDelayUS = 0; 
 
   Serial.printf("🚀 Follow Mode: Speed %.1fx | Metronome: AUDIO ENGINE\n", playbackSpeed);
+
+  // --- Capture initial tempo ---
+  uint8_t firstNote = 255;
+
+  while (midi2.nextEvent(ev2, absTicks)) {
+    if (ev2.type == MIDI_TEMPO) {
+      tempoUS = ev2.tempoUS;
+    }
+    if (ev2.type == MIDI_NOTE_ON && ev2.velocity > 0 && firstNote == 255) {
+      firstNote = ev2.note;
+      firstNoteTick = absTicks;
+      break;
+    }
+  }
+
+  midi2.close();
+
+  followCountIn(tempoUS, firstNote);
+
+  MidiParser midi;
+  if (!midi.open(path)) return;
+  
+  Led_clear();
+  
+  tempoUS = 500000; 
+  division = midi.getDivision(); 
+  lastStopCheck = 0;
+  
+  MidiEvent ev;
+  absTicks = 0;
+  globalTicks = 0;
+  accumulatedDelayUS = 0; 
+  startUS = micros();
+
+  Serial.printf("🚀 Follow Mode: Speed %.1fx | Metronome: AUDIO ENGINE\n", playbackSpeed);
+
+  bool haveEv = false;
+
+  while (midi.nextEvent(ev, absTicks)) {
+    if (ev.type == MIDI_TEMPO) {
+      tempoUS = ev.tempoUS;
+    }
+
+    if (absTicks >= firstNoteTick) {
+      haveEv = true;   // we already HAVE the first event
+      break;
+    }
+  }
+
+  globalTicks = absTicks;
+  accumulatedDelayUS = 0;
+  startUS = micros();
   
   // start metronome if enabled
   if (g_metronomeEnabled) {
@@ -390,8 +450,6 @@ static void playVisualSong(const String& path) {
   } else {
      Audio_setMetronomeConfig(0, 0); // Ensure it's off
   }
-
-  bool haveEv = false;
 
   while (!stopRequested) {
     
@@ -456,6 +514,7 @@ void Player_playSong(const String &path) {
   }
   else if (currentMode == MODE_SIMON) {
     int count = buildSegmentsByBars(path, segments, MAX_SEGMENTS, g_memorizeBarsPerSegment);
+    Audio_playEffect("/feedback/repeat.wav");
     for (int r = 0; r < count && !stopRequested; r++) {
       while (!stopRequested) {
         g_segmentHadMistake = false;
@@ -487,6 +546,7 @@ void Player_playSong(const String &path) {
       Serial.println("❌ Segment build failed.");
       return;
     }
+    Audio_playEffect("/feedback/put_out.wav");
     
     // Loop through segments
     for (int s = 0; s < segmentCount && !stopRequested; s++) {
@@ -502,7 +562,7 @@ void Player_playSong(const String &path) {
 
           if (!g_segmentHadMistake) {
               Serial.println("✨ Segment Cleared!");
-              Audio_playEffect("/feedback/continue.wav");
+              // Audio_playEffect("/feedback/continue.wav");
             //  delay(1500); 
               break;
           }
