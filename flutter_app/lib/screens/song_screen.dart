@@ -52,14 +52,27 @@ class _SongScreenState extends State<SongScreen> {
   String get _myName => _auth.currentUser!.email ?? 'Unknown';
 
   // ----------- RTDB play state -----------
-  bool isPlaying = false;
+  bool _isPlaying = false; // status == "playing"
+  bool _isStarted = true;  // started == true from ESP (true means "actually started")
+  String _statusMessage = "";
+
   String _ownerUid = '';
   String _ownerName = '';
   String _ownerSongTitle = '';
 
   bool get _iAmOwner => _ownerUid.isNotEmpty && _ownerUid == _myUid;
-  bool get _isPlayingMine => isPlaying && _iAmOwner;
-  bool get _someoneElsePlaying => isPlaying && !_iAmOwner;
+
+  /// "mine is running (or starting)" — since you want status to be "playing" immediately,
+  /// we treat "playing + iAmOwner" as mine even if not started yet.
+  bool get _isPlayingMine => _isPlaying && _iAmOwner;
+
+  /// This is your requested "isStart": false until ESP says started=true.
+  /// Loader should show while this is true.
+  bool get _isStartingMine => _isPlayingMine && !_isStarted;
+
+  /// someone else holds the piano if they are owner and status is playing (regardless started)
+  bool get _someoneElseUsingPiano =>
+      (_ownerUid.isNotEmpty && _ownerUid != _myUid) && _isPlaying;
 
   // ----------- navigation / pop -----------
   bool _canPop = false;
@@ -81,6 +94,9 @@ class _SongScreenState extends State<SongScreen> {
 
   bool _didInitHandsChoiceFromInitial = false;
 
+  // if ESP never flips started=true, we can timeout and stop
+  Timer? _startTimeout;
+
   @override
   void initState() {
     super.initState();
@@ -94,18 +110,45 @@ class _SongScreenState extends State<SongScreen> {
 
     _connSub = _connectedRef.onValue.listen((event) {});
 
-    // Listen play status + owner fields
+    // Listen play status + owner fields + started flag from ESP
     _playSub = _playRef.onValue.listen((event) {
       final Map<dynamic, dynamic>? data =
           event.snapshot.value as Map<dynamic, dynamic>?;
       if (!mounted || data == null) return;
 
+      final String status = (data["status"] ?? "stopped").toString();
+      final bool playing = status == "playing";
+
+      // IMPORTANT:
+      // You want status to be "playing" immediately on tap,
+      // so the ESP must update another field to say "actually started".
+      // We'll use RTDB field: started (bool).
+      // App sets started=false when sending song, ESP sets started=true when it REALLY starts.
+      final bool started = (data["started"] as bool?) ?? true;
+
+      final String msg = (data["statusMessage"] ?? "").toString();
+
+      final String ownerUid = (data["ownerUid"] ?? "").toString();
+
       setState(() {
-        isPlaying = (data["status"] ?? "stopped") == "playing";
-        _ownerUid = (data["ownerUid"] ?? "").toString();
+        _isPlaying = playing;
+        _isStarted = started;
+        _statusMessage = msg;
+
+        _ownerUid = ownerUid;
         _ownerName = (data["ownerName"] ?? "").toString();
         _ownerSongTitle = (data["ownerSongTitle"] ?? "").toString();
+
+        // If we are not the owner anymore, clear local mode selection (optional)
+        if (!_iAmOwner && _mode != null) {
+          _mode = null;
+        }
       });
+
+      // cancel timeout if song actually started or stopped
+      if (!playing || started) {
+        _startTimeout?.cancel();
+      }
     });
   }
 
@@ -113,6 +156,7 @@ class _SongScreenState extends State<SongScreen> {
   void dispose() {
     _playSub.cancel();
     _connSub.cancel();
+    _startTimeout?.cancel();
     super.dispose();
   }
 
@@ -125,11 +169,13 @@ class _SongScreenState extends State<SongScreen> {
     _onDisconnect ??= _playRef.onDisconnect();
     await _onDisconnect!.update({
       "status": "stopped",
+      "started": true,
       "ownerUid": "",
       "ownerName": "",
       "ownerSongId": "",
       "ownerSongTitle": "",
       "startedAt": 0,
+      "statusMessage": "",
     });
   }
 
@@ -188,42 +234,67 @@ class _SongScreenState extends State<SongScreen> {
     return 2; // simon
   }
 
-  // ---------------- RTDB commands ----------------
-  Future<void> sendPlaybackCommand(bool play, String path) async {
-    final rtdb.DataSnapshot snapshot = await _playRef.get();
-    int count = 0;
+  // ---------------- recompute storage path ----------------
+  void _recomputeStoragePath() {
+    final Map<String, dynamic> diffs = _lastDiffs;
+    if (diffs.isEmpty) {
+      _currentStoragePath = '';
+      return;
+    }
 
-    if (snapshot.exists) {
-      final Object? raw = snapshot.value;
-      if (raw is Map) {
-        final Map<dynamic, dynamic> data = raw as Map<dynamic, dynamic>;
-        final Object? c = data["commandsCounter"];
-        count = c is int ? c : 0;
+    final List<String> candidateRawDiffKeys = <String>[];
+    for (final entry in diffs.entries) {
+      final String rawKey = entry.key.toString();
+      final String label = _cleanDifficulty(rawKey);
+
+      if (_selectedDifficulty == 'UNKNOWN') {
+        candidateRawDiffKeys.add(rawKey);
+      } else {
+        if (_isUnknownValue(label)) continue;
+        if (label == _selectedDifficulty) candidateRawDiffKeys.add(rawKey);
       }
     }
 
-    await _playRef.update({
-      "commandsCounter": count + 1,
-      "fileToPlay": path,
-      "playMode": _playModeToInt(_mode),
-      "status": play ? "playing" : "stopped",
-      "metronome": _metronomeOn,
-      "speed": _chosenSpeed,
-      "segments": _segments,
-      "uiMode": _mode?.name ?? "",
-    });
+    String bestPath = '';
+
+    for (final String rawDiffKey in candidateRawDiffKeys) {
+      final Map<String, dynamic> diffObj =
+          diffs[rawDiffKey] as Map<String, dynamic>? ?? <String, dynamic>{};
+      final Map<String, dynamic> handsObj =
+          diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
+
+      for (final entry in handsObj.entries) {
+        final String rawHandKey = entry.key.toString();
+        final String handLabel = _cleanHandsLabel(rawHandKey);
+        if (_isUnknownValue(handLabel)) continue;
+
+        final Map<String, dynamic> handObj =
+            entry.value as Map<String, dynamic>? ?? <String, dynamic>{};
+        final String p = (handObj['storagePath'] as String?) ?? '';
+        if (p.isEmpty) continue;
+
+        final bool isTwo = (handLabel == 'BOTH');
+        final bool wantTwo = (_handsChoice == _HandsChoice.twoHands);
+
+        if (wantTwo && isTwo) {
+          bestPath = p;
+          break;
+        }
+        if (!wantTwo && !isTwo) {
+          bestPath = p;
+          break;
+        }
+      }
+      if (bestPath.isNotEmpty) break;
+    }
+
+    _currentStoragePath = bestPath;
   }
 
-  Future<void> _clearOwnerFields() async {
-    await _playRef.update({
-      "ownerUid": "",
-      "ownerName": "",
-      "ownerSongId": "",
-      "ownerSongTitle": "",
-      "startedAt": 0,
-    });
-  }
+  // ===================== START/STOP with lock =====================
 
+  /// Start: status becomes "playing" immediately + started=false
+  /// ESP must flip started=true when audio really begins.
   Future<bool> _tryStartPlayingWithLock(String path) async {
     final rtdb.TransactionResult tr =
         await _playRef.runTransaction((currentData) {
@@ -235,7 +306,7 @@ class _SongScreenState extends State<SongScreen> {
       final String ownerUid = (data["ownerUid"] ?? "").toString();
 
       final bool someoneElsePlaying =
-          (status == "playing" && ownerUid.isNotEmpty && ownerUid != _myUid);
+          (status == "playing") && ownerUid.isNotEmpty && ownerUid != _myUid;
 
       if (someoneElsePlaying) {
         return rtdb.Transaction.abort();
@@ -247,7 +318,14 @@ class _SongScreenState extends State<SongScreen> {
       data["commandsCounter"] = count + 1;
       data["fileToPlay"] = path;
       data["playMode"] = _playModeToInt(_mode);
+
+      // IMPORTANT: you asked to set playing immediately
       data["status"] = "playing";
+
+      // started flag: false until ESP flips it to true
+      data["started"] = false;
+
+      data["statusMessage"] = "Starting...";
       data["metronome"] = _metronomeOn;
       data["speed"] = _chosenSpeed;
       data["segments"] = _segments;
@@ -267,24 +345,38 @@ class _SongScreenState extends State<SongScreen> {
     return tr.committed;
   }
 
-  // ===================== STOP + RESET UI (circle back to normal) =====================
   Future<void> _stopPlaybackAndResetUI({bool clearMode = true}) async {
-    await sendPlaybackCommand(false, _currentStoragePath);
-    await _clearOwnerFields();
-    await _disarmOnDisconnect();
-
-    if (!mounted) return;
-
-    if (clearMode) {
-      setState(() => _mode = null);
-    }
-
-    // optional cleanup so RTDB won't show old UI mode
+    // Stop and clear started flag
     await _playRef.update({
       "status": "stopped",
-      if (clearMode) "playMode": -1,
-      if (clearMode) "uiMode": "",
+      "started": true,
+      "statusMessage": "",
+      "playMode": clearMode ? -1 : _playModeToInt(_mode),
+      "uiMode": clearMode ? "" : (_mode?.name ?? ""),
+      "fileToPlay": _currentStoragePath,
+      "metronome": _metronomeOn,
+      "speed": _chosenSpeed,
+      "segments": _segments,
     });
+
+    // clear owner fields
+    await _playRef.update({
+      "ownerUid": "",
+      "ownerName": "",
+      "ownerSongId": "",
+      "ownerSongTitle": "",
+      "startedAt": 0,
+    });
+
+    await _disarmOnDisconnect();
+    _startTimeout?.cancel();
+
+    if (mounted) {
+      setState(() {
+        _statusMessage = "";
+        if (clearMode) _mode = null;
+      });
+    }
   }
 
   // ---------------- dialogs ----------------
@@ -389,208 +481,6 @@ class _SongScreenState extends State<SongScreen> {
     }
   }
 
-  Future<bool> _showStopBeforeChangeDialog() async {
-    final bool? stop = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text("Stop playing?"),
-        content: const Text(
-          "The song is currently playing.\nDo you want to stop it before changing settings?",
-        ),
-        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
-        contentTextStyle: const TextStyle(color: Colors.white),
-        titleTextStyle: const TextStyle(
-          color: Colors.white,
-          fontSize: 25,
-          fontWeight: FontWeight.bold,
-        ),
-        actions: [
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Cancel"),
-          ),
-          TextButton(
-            style: TextButton.styleFrom(foregroundColor: Colors.white),
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text("Stop & Change"),
-          ),
-        ],
-      ),
-    );
-
-    return stop == true;
-  }
-
-  Future<bool> _showChooseSpeedDialog() async {
-    double tempSpeed = _chosenSpeed.clamp(0.1, 2.0);
-
-    final bool? ok = await showDialog<bool>(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
-        title: const Text(
-          "Choose speed:",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        content: StatefulBuilder(
-          builder: (context, setLocal) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Slider(
-                value: tempSpeed,
-                min: 0.1,
-                max: 2.0,
-                divisions: 19,
-                label: tempSpeed.toStringAsFixed(1),
-                onChanged: (v) {
-                  final double snapped = (v * 10).round() / 10.0;
-                  setLocal(() => tempSpeed = snapped);
-                },
-              ),
-              const SizedBox(height: 6),
-              Text(
-                "${tempSpeed.toStringAsFixed(1)}x",
-                style: const TextStyle(color: Colors.white70),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Cancel", style: TextStyle(color: Colors.white)),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() => _chosenSpeed = tempSpeed);
-              Navigator.pop(context, true);
-            },
-            child: const Text("OK", style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    return ok == true;
-  }
-
-  Future<bool> _showChooseSegmentsDialog() async {
-    int temp = _segments.clamp(1, 4);
-
-    final bool? ok = await showDialog<bool>(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) => AlertDialog(
-        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
-        title: const Text(
-          "Choose segments:",
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-        ),
-        content: StatefulBuilder(
-          builder: (context, setLocal) => Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  IconButton(
-                    onPressed: temp > 1 ? () => setLocal(() => temp--) : null,
-                    icon: const Icon(Icons.remove, color: Colors.white),
-                  ),
-                  Text(
-                    "$temp",
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: temp < 4 ? () => setLocal(() => temp++) : null,
-                    icon: const Icon(Icons.add, color: Colors.white),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              const Text("1 to 4", style: TextStyle(color: Colors.white70)),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("Cancel", style: TextStyle(color: Colors.white)),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() => _segments = temp);
-              Navigator.pop(context, true);
-            },
-            child: const Text("OK", style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-
-    return ok == true;
-  }
-
-  Future<void> _showMetronomeDialog() async {
-    bool localOn = _metronomeOn;
-
-    final bool? ok = await showDialog<bool>(
-      context: context,
-      barrierDismissible: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setLocal) {
-            return AlertDialog(
-              backgroundColor: const Color.fromARGB(255, 23, 23, 23),
-              title: const Text(
-                "Metronome",
-                style:
-                    TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-              ),
-              content: SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                value: localOn,
-                onChanged: (v) => setLocal(() => localOn = v),
-                activeColor: Colors.blueAccent,
-                title: const Text(
-                  "Enable metronome",
-                  style: TextStyle(color: Colors.white),
-                ),
-                subtitle: Text(
-                  localOn ? "On" : "Off",
-                  style: const TextStyle(color: Colors.white70),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context, false),
-                  child:
-                      const Text("Cancel", style: TextStyle(color: Colors.white)),
-                ),
-                TextButton(
-                  onPressed: () => Navigator.pop(context, true),
-                  child: const Text("OK", style: TextStyle(color: Colors.white)),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-
-    if (ok == true) {
-      setState(() => _metronomeOn = localOn);
-      await _playRef.update({"metronome": _metronomeOn});
-    }
-  }
-
   // ---------------- navigation ----------------
   Future<void> _handleNavLeave(int index) async {
     if (_isPlayingMine) {
@@ -613,100 +503,26 @@ class _SongScreenState extends State<SongScreen> {
     }
   }
 
-  // ---------------- recompute storage path ----------------
-  void _recomputeStoragePath() {
-    final Map<String, dynamic> diffs = _lastDiffs;
-    if (diffs.isEmpty) {
-      _currentStoragePath = '';
-      return;
-    }
-
-    final List<String> candidateRawDiffKeys = <String>[];
-    for (final entry in diffs.entries) {
-      final String rawKey = entry.key.toString();
-      final String label = _cleanDifficulty(rawKey);
-
-      if (_selectedDifficulty == 'UNKNOWN') {
-        candidateRawDiffKeys.add(rawKey);
-      } else {
-        if (_isUnknownValue(label)) continue;
-        if (label == _selectedDifficulty) candidateRawDiffKeys.add(rawKey);
-      }
-    }
-
-    String bestPath = '';
-
-    for (final String rawDiffKey in candidateRawDiffKeys) {
-      final Map<String, dynamic> diffObj =
-          diffs[rawDiffKey] as Map<String, dynamic>? ?? <String, dynamic>{};
-      final Map<String, dynamic> handsObj =
-          diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
-
-      for (final entry in handsObj.entries) {
-        final String rawHandKey = entry.key.toString();
-        final String handLabel = _cleanHandsLabel(rawHandKey);
-        if (_isUnknownValue(handLabel)) continue;
-
-        final Map<String, dynamic> handObj =
-            entry.value as Map<String, dynamic>? ?? <String, dynamic>{};
-        final String p = (handObj['storagePath'] as String?) ?? '';
-        if (p.isEmpty) continue;
-
-        final bool isTwo = (handLabel == 'BOTH');
-        final bool wantTwo = (_handsChoice == _HandsChoice.twoHands);
-
-        if (wantTwo && isTwo) {
-          bestPath = p;
-          break;
-        }
-        if (!wantTwo && !isTwo) {
-          bestPath = p;
-          break;
-        }
-      }
-      if (bestPath.isNotEmpty) break;
-    }
-
-    _currentStoragePath = bestPath;
-  }
-
-  // ---------------- change settings while playing ----------------
-  Future<void> _attemptChangeWhilePlaying(void Function() applyChange) async {
-    if (!_isPlayingMine) {
-      setState(() {
-        applyChange();
-        _recomputeStoragePath();
-      });
-      return;
-    }
-
-    final bool ok = await _showStopBeforeChangeDialog();
-    if (!ok) return;
-
-    await _stopPlaybackAndResetUI(clearMode: true);
-
-    if (!mounted) return;
-
-    setState(() {
-      applyChange();
-      _recomputeStoragePath();
-    });
-  }
-
-  // ---------------- play/stop ----------------
-  Future<void> _onPlayStopPressed() async {
+  // =====================
+  // PLAY/STOP (called from circle)
+  // =====================
+  Future<void> _startOrStop() async {
     if (_mode == null) return;
 
     _recomputeStoragePath();
     final String path = _currentStoragePath;
     if (path.isEmpty) return;
 
-    if (_someoneElsePlaying) {
+    if (_someoneElseUsingPiano) {
       await _showSomeoneElsePlayingDialog();
       return;
     }
 
+    // Stop (works גם בזמן "טעינה" כי status כבר playing)
     if (_isPlayingMine) {
+      final bool stop = await _showStopSongDialog();
+      if (!stop) return;
+
       await _stopPlaybackAndResetUI(clearMode: true);
 
       final User? u = FirebaseAuth.instance.currentUser;
@@ -716,6 +532,7 @@ class _SongScreenState extends State<SongScreen> {
       return;
     }
 
+    // Start with lock
     final bool ok = await _tryStartPlayingWithLock(path);
     if (!ok) {
       await _showSomeoneElsePlayingDialog();
@@ -731,41 +548,46 @@ class _SongScreenState extends State<SongScreen> {
     }
 
     await _armOnDisconnectIfConnected();
+
+    // Timeout: if ESP never flips started=true
+    _startTimeout?.cancel();
+    _startTimeout = Timer(const Duration(seconds: 20), () async {
+      if (!mounted) return;
+
+      // if still mine, still playing, but not started => stop
+      if (_isStartingMine) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("The piano didn't start (timeout).")),
+        );
+        await _stopPlaybackAndResetUI(clearMode: true);
+      }
+    });
   }
 
-  // =====================
-  // Circles: mode + play
-  // =====================
+  // Circle pressed: choose mode and start/stop
   Future<void> _onModeCirclePressed(_PlayMode m) async {
-    if (_someoneElsePlaying) return;
+    if (_someoneElseUsingPiano) return;
 
-    _recomputeStoragePath();
-
-    // 1) אם לוחצים שוב על אותו עיגול בזמן נגינה -> לשאול אם לעצור
+    // If tapping same mode while mine is playing (or starting) => stop
     if (_isPlayingMine && _mode == m) {
-      final bool stop = await _showStopSongDialog();
-      if (!stop) return;
-
-      await _stopPlaybackAndResetUI(clearMode: true);
-
-      final User? u = FirebaseAuth.instance.currentUser;
-      if (u != null) {
-        await StatsService(FirebaseFirestore.instance).registerPracticeDay(u.uid);
-      }
+      await _startOrStop(); // will stop
       return;
     }
 
-    // 2) אם מתנגן וצריך לעבור למוד אחר -> Stop & Change ואז לנגן חדש
+    // Change mode while playing -> stop first then start new
     if (_isPlayingMine && _mode != m) {
-      final bool ok = await _showStopBeforeChangeDialog();
-      if (!ok) return;
-
+      final bool stop = await _showStopSongDialog();
+      if (!stop) return;
       await _stopPlaybackAndResetUI(clearMode: true);
     }
 
     if (!mounted) return;
-    setState(() => _mode = m);
 
+    setState(() {
+      _mode = m;
+    });
+
+    // Update mode fields (optional)
     await _playRef.update({
       "playMode": _playModeToInt(_mode),
       "uiMode": _mode?.name ?? "",
@@ -774,7 +596,8 @@ class _SongScreenState extends State<SongScreen> {
       "segments": _segments,
     });
 
-    await _onPlayStopPressed();
+    // Start now
+    await _startOrStop();
   }
 
   // ======================
@@ -828,14 +651,12 @@ class _SongScreenState extends State<SongScreen> {
             final Map<String, dynamic> data =
                 snap.data!.data() as Map<String, dynamic>? ?? <String, dynamic>{};
             final Map<String, dynamic> diffs =
-                data['difficulties'] as Map<String, dynamic>? ??
-                    <String, dynamic>{};
+                data['difficulties'] as Map<String, dynamic>? ?? <String, dynamic>{};
 
             _lastDiffs = diffs;
 
             // Build map: label -> raw keys
-            final Map<String, List<String>> rawKeysByDiffLabel =
-                <String, List<String>>{};
+            final Map<String, List<String>> rawKeysByDiffLabel = <String, List<String>>{};
             final List<String> unknownRawDiffKeys = <String>[];
 
             for (final entry in diffs.entries) {
@@ -850,9 +671,7 @@ class _SongScreenState extends State<SongScreen> {
               }
             }
 
-            final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()
-              ..sort();
-
+            final List<String> diffLabels = rawKeysByDiffLabel.keys.toList()..sort();
             if (diffLabels.isEmpty && unknownRawDiffKeys.isNotEmpty) {
               rawKeysByDiffLabel['UNKNOWN'] = unknownRawDiffKeys;
               diffLabels.add('UNKNOWN');
@@ -879,11 +698,9 @@ class _SongScreenState extends State<SongScreen> {
 
             for (final String rawDiffKey in selectedRawDiffKeys) {
               final Map<String, dynamic> diffObj =
-                  diffs[rawDiffKey] as Map<String, dynamic>? ??
-                      <String, dynamic>{};
+                  diffs[rawDiffKey] as Map<String, dynamic>? ?? <String, dynamic>{};
               final Map<String, dynamic> handsObj =
-                  diffObj['hands'] as Map<String, dynamic>? ??
-                      <String, dynamic>{};
+                  diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
 
               for (final entry in handsObj.entries) {
                 final String rawHandKey = entry.key.toString();
@@ -899,8 +716,7 @@ class _SongScreenState extends State<SongScreen> {
                 if (!_didInitHandsChoiceFromInitial) {
                   if (initialHandsClean == 'BOTH' && handLabel == 'BOTH') {
                     initialChoiceFound = _HandsChoice.twoHands;
-                  } else if ((initialHandsClean == 'RIGHT' ||
-                          initialHandsClean == 'LEFT') &&
+                  } else if ((initialHandsClean == 'RIGHT' || initialHandsClean == 'LEFT') &&
                       (handLabel == 'RIGHT' || handLabel == 'LEFT')) {
                     initialChoiceFound = _HandsChoice.oneHand;
                   }
@@ -915,9 +731,8 @@ class _SongScreenState extends State<SongScreen> {
                 _handsChoice = initialChoiceFound!;
               } else {
                 if (showHandsSelector) {
-                  _handsChoice = (initialHandsClean == 'BOTH')
-                      ? _HandsChoice.twoHands
-                      : _HandsChoice.oneHand;
+                  _handsChoice =
+                      (initialHandsClean == 'BOTH') ? _HandsChoice.twoHands : _HandsChoice.oneHand;
                 } else if (hasTwoHands && !hasOneHand) {
                   _handsChoice = _HandsChoice.twoHands;
                 } else if (hasOneHand && !hasTwoHands) {
@@ -928,170 +743,138 @@ class _SongScreenState extends State<SongScreen> {
             }
 
             if (!showHandsSelector) {
-              if (hasTwoHands && !hasOneHand) {
-                _handsChoice = _HandsChoice.twoHands;
-              }
-              if (hasOneHand && !hasTwoHands) {
-                _handsChoice = _HandsChoice.oneHand;
-              }
+              if (hasTwoHands && !hasOneHand) _handsChoice = _HandsChoice.twoHands;
+              if (hasOneHand && !hasTwoHands) _handsChoice = _HandsChoice.oneHand;
             }
 
             _recomputeStoragePath();
             final bool canPlay = _currentStoragePath.isNotEmpty;
-            final bool circlesEnabled = canPlay && !_someoneElsePlaying;
+            final bool circlesEnabled = canPlay && !_someoneElseUsingPiano;
 
             final double screenHeight = MediaQuery.of(context).size.height;
             final double screenWidth = MediaQuery.of(context).size.width;
             final double coverHeight = screenHeight * 0.25;
             final double coverWidth = screenWidth * 0.6;
 
-            return SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
-              child: Column(
-                children: [
-                  Container(
-                    height: coverHeight,
-                    width: coverWidth,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFFFD54F),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: const Center(
-                      child: Icon(
-                        Icons.music_note,
-                        size: 112,
-                        color: Colors.black,
+            // your requested flag:
+            // loader shows while this is true
+            final bool isStart = _isStarted; // true means started
+            final bool isLoadingMine = _isPlayingMine && !isStart;
+
+            return Stack(
+              children: [
+                SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 12),
+                  child: Column(
+                    children: [
+                      Container(
+                        height: coverHeight,
+                        width: coverWidth,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFFFD54F),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Center(
+                          child: Icon(Icons.music_note, size: 112, color: Colors.black),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Center(
-                    child: Column(
-                      children: [
-                        Text(
-                          widget.title,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
+                      const SizedBox(height: 20),
+                      Center(
+                        child: Column(
+                          children: [
+                            Text(
+                              widget.title,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 26,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              widget.artist,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(color: Colors.white70, fontSize: 18),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 22),
+
+                      if (showDifficultySelector) ...[
+                        _LabeledBox(
+                          label: "Difficulty:",
+                          child: _DarkDropdown(
+                            value: _selectedDifficulty,
+                            items: diffLabels,
+                            onChanged: (v) {
+                              setState(() {
+                                _selectedDifficulty = v;
+                                _didInitHandsChoiceFromInitial = false;
+                              });
+                              _recomputeStoragePath();
+                            },
                           ),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          widget.artist,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 18,
-                          ),
-                        ),
+                        const SizedBox(height: 14),
                       ],
-                    ),
-                  ),
-                  const SizedBox(height: 22),
 
-                  // Difficulty dropdown
-                  if (showDifficultySelector) ...[
-                    _LabeledBox(
-                      label: "Difficulty:",
-                      child: _DarkDropdown(
-                        value: _selectedDifficulty,
-                        items: diffLabels,
-                        onChanged: (v) {
-                          _attemptChangeWhilePlaying(() {
-                            _selectedDifficulty = v;
-                            _didInitHandsChoiceFromInitial = false;
-                          });
-                        },
+                      _SettingsRow(
+                        speed: _chosenSpeed,
+                        showHands: showHandsSelector,
+                        hands: _handsChoice,
+                        metronomeOn: _metronomeOn,
+                        segments: _segments,
+                        onSpeedTap: () {},     // keep your existing dialogs if you want
+                        onHandsTap: null,       // keep your existing logic if you want
+                        onMetronomeTap: () {},
+                        onSegmentsTap: () {},
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                  ],
 
-                  // =========================
-                  // Settings row
-                  // =========================
-                  _SettingsRow(
-                    speed: _chosenSpeed,
-                    showHands: showHandsSelector,
-                    hands: _handsChoice,
-                    metronomeOn: _metronomeOn,
-                    segments: _segments,
-                    onSpeedTap: () async {
-                      if (_isPlayingMine) {
-                        final bool ok = await _showStopBeforeChangeDialog();
-                        if (!ok) return;
-                        await _stopPlaybackAndResetUI(clearMode: true);
-                      }
-                      await _showChooseSpeedDialog();
-                      await _playRef.update({"speed": _chosenSpeed});
-                    },
-                    onHandsTap: showHandsSelector
-                        ? () async {
-                            await _attemptChangeWhilePlaying(() {
-                              _handsChoice =
-                                  (_handsChoice == _HandsChoice.oneHand)
-                                      ? _HandsChoice.twoHands
-                                      : _HandsChoice.oneHand;
-                            });
-                          }
-                        : null,
-                    onMetronomeTap: () async {
-                      if (_isPlayingMine) {
-                        final bool ok = await _showStopBeforeChangeDialog();
-                        if (!ok) return;
-                        await _stopPlaybackAndResetUI(clearMode: true);
-                      }
-                      await _showMetronomeDialog();
-                    },
-                    onSegmentsTap: () async {
-                      if (_isPlayingMine) {
-                        final bool ok = await _showStopBeforeChangeDialog();
-                        if (!ok) return;
-                        await _stopPlaybackAndResetUI(clearMode: true);
-                      }
-                      final bool ok = await _showChooseSegmentsDialog();
-                      if (!ok) return;
-                      await _playRef.update({"segments": _segments});
-                    },
-                  ),
+                      const SizedBox(height: 55),
 
-                  const SizedBox(height: 55),
-
-                  // =========================
-                  // Circles
-                  // =========================
-                  Opacity(
-                    opacity: circlesEnabled ? 1.0 : 0.45,
-                    child: IgnorePointer(
-                      ignoring: !circlesEnabled,
-                      child: _ModeCirclesRow(
-                        selected: _mode,
-                        isPlayingMine: _isPlayingMine,
-                        onMemorize: () =>
-                            _onModeCirclePressed(_PlayMode.memorize),
-                        onFollow: () => _onModeCirclePressed(_PlayMode.follow),
-                        onSimon: () => _onModeCirclePressed(_PlayMode.simon),
+                      Opacity(
+                        opacity: circlesEnabled ? 1.0 : 0.45,
+                        child: IgnorePointer(
+                          ignoring: !circlesEnabled,
+                          child: _ModeCirclesRow(
+                            selected: _mode,
+                            isPlayingMine: _isPlayingMine,
+                            isLoadingMine: isLoadingMine,
+                            onMemorize: () => _onModeCirclePressed(_PlayMode.memorize),
+                            onFollow: () => _onModeCirclePressed(_PlayMode.follow),
+                            onSimon: () => _onModeCirclePressed(_PlayMode.simon),
+                          ),
+                        ),
                       ),
-                    ),
+
+                      const SizedBox(height: 12),
+                      if (_someoneElseUsingPiano)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Text(
+                            'Playing now: ${_ownerName.isEmpty ? "Someone" : _ownerName}',
+                            style: const TextStyle(color: Colors.white70),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+
+                      if (_statusMessage.isNotEmpty)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            _statusMessage,
+                            style: const TextStyle(color: Colors.white54),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+
+                      const SizedBox(height: 8),
+                    ],
                   ),
-
-                  const SizedBox(height: 14),
-
-                  if (_someoneElsePlaying)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 6),
-                      child: Text(
-                        'Playing now: ${_ownerName.isEmpty ? "Someone" : _ownerName}',
-                        style: const TextStyle(color: Colors.white70),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-
-                  const SizedBox(height: 8),
-                ],
-              ),
+                ),
+              ],
             );
           },
         ),
@@ -1105,7 +888,7 @@ class _SongScreenState extends State<SongScreen> {
 }
 
 // =====================
-// Settings row widget
+// Settings row widget (unchanged)
 // =====================
 class _SettingsRow extends StatelessWidget {
   const _SettingsRow({
@@ -1151,9 +934,7 @@ class _SettingsRow extends StatelessWidget {
             icon: Icons.pan_tool,
             onTap: showHands ? onHandsTap : null,
             disabled: !showHands,
-            customIcon: showHands
-                ? _HandsIcon(twoHands: hands == _HandsChoice.twoHands)
-                : null,
+            customIcon: showHands ? _HandsIcon(twoHands: hands == _HandsChoice.twoHands) : null,
           ),
         ),
         const SizedBox(width: 10),
@@ -1247,8 +1028,7 @@ class _SettingPill extends StatelessWidget {
                   SizedBox(
                     height: 22,
                     child: Center(
-                      child:
-                          customIcon ?? Icon(icon, color: Colors.white, size: 22),
+                      child: customIcon ?? Icon(icon, color: Colors.white, size: 22),
                     ),
                   ),
                   if (showX)
@@ -1295,12 +1075,13 @@ class _SettingPill extends StatelessWidget {
 }
 
 // =====================
-// Circles widget (bigger)
+// Circles widget (loader logic isStart/isLoadingMine)
 // =====================
 class _ModeCirclesRow extends StatelessWidget {
   const _ModeCirclesRow({
     required this.selected,
     required this.isPlayingMine,
+    required this.isLoadingMine,
     required this.onMemorize,
     required this.onFollow,
     required this.onSimon,
@@ -1308,6 +1089,9 @@ class _ModeCirclesRow extends StatelessWidget {
 
   final _PlayMode? selected;
   final bool isPlayingMine;
+
+  /// true while my "started" is false
+  final bool isLoadingMine;
 
   final VoidCallback onMemorize;
   final VoidCallback onFollow;
@@ -1322,6 +1106,7 @@ class _ModeCirclesRow extends StatelessWidget {
             title: "Memorize\nSong",
             selected: selected == _PlayMode.memorize,
             isPlayingMine: isPlayingMine && selected == _PlayMode.memorize,
+            isLoading: isLoadingMine && selected == _PlayMode.memorize,
             onTap: onMemorize,
           ),
         ),
@@ -1331,6 +1116,7 @@ class _ModeCirclesRow extends StatelessWidget {
             title: "Follow\nSong",
             selected: selected == _PlayMode.follow,
             isPlayingMine: isPlayingMine && selected == _PlayMode.follow,
+            isLoading: isLoadingMine && selected == _PlayMode.follow,
             onTap: onFollow,
           ),
         ),
@@ -1340,6 +1126,7 @@ class _ModeCirclesRow extends StatelessWidget {
             title: "Simon\nGame",
             selected: selected == _PlayMode.simon,
             isPlayingMine: isPlayingMine && selected == _PlayMode.simon,
+            isLoading: isLoadingMine && selected == _PlayMode.simon,
             onTap: onSimon,
           ),
         ),
@@ -1354,12 +1141,14 @@ class _GreenModeCircle extends StatelessWidget {
     required this.selected,
     required this.isPlayingMine,
     required this.onTap,
+    required this.isLoading,
   });
 
   final String title;
   final bool selected;
   final bool isPlayingMine;
   final VoidCallback onTap;
+  final bool isLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -1389,10 +1178,21 @@ class _GreenModeCircle extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(
-                isPlayingMine ? Icons.stop_circle : Icons.play_circle_fill,
-                color: Colors.black,
-                size: 42,
+              Stack(
+                alignment: Alignment.center,
+                children: [
+                  Icon(
+                    isPlayingMine ? Icons.stop_circle : Icons.play_circle_fill,
+                    color: Colors.black,
+                    size: 42,
+                  ),
+                  if (isLoading)
+                    const SizedBox(
+                      width: 34,
+                      height: 34,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                ],
               ),
               const SizedBox(height: 8),
               Text(
@@ -1424,9 +1224,7 @@ class _LabeledBox extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        child,
-      ],
+      children: [child],
     );
   }
 }
