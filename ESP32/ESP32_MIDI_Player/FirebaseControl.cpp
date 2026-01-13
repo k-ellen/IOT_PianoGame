@@ -38,7 +38,7 @@ void FirebaseControl_init() {
 
 bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
   if (!Firebase.ready()) return false;
-  if (millis() - lastCheck < 2000) return false;
+   if (millis() - lastCheck < 300) return false;
 
   lastCheck = millis();
 
@@ -168,5 +168,17 @@ void FirebaseControl_setStatus(const String &status) {
   if (Firebase.ready()) {
     // Write to the same node the App listens to
     Firebase.RTDB.setString(&fbdo, "/esp32API/playCommand/status", status);
+  }
+}
+
+void FirebaseControl_setStarted(bool v) {
+    if (Firebase.ready()) {
+    Firebase.RTDB.setBool(&fbdo, "/esp32API/playCommand/started", v);
+  }
+}
+
+void FirebaseControl_setStatusMessage(const String& msg) {
+  if (Firebase.ready()) {
+    Firebase.RTDB.setString(&fbdo, "/esp32API/playCommand/statusMessage", msg);
   }
 }
