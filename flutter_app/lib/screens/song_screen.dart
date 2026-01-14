@@ -140,9 +140,12 @@ class _SongScreenState extends State<SongScreen> {
         _ownerSongTitle = (data["ownerSongTitle"] ?? "").toString();
 
         // If we are not the owner anymore, clear local mode selection (optional)
-        if (!_iAmOwner && _mode != null) {
-          _mode = null;
-        }
+        final bool someoneElseIsOwner =
+    ownerUid.isNotEmpty && ownerUid != _myUid;
+
+if (someoneElseIsOwner && _mode != null) {
+  _mode = null;
+}
       });
 
       // cancel timeout if song actually started or stopped
@@ -325,7 +328,7 @@ class _SongScreenState extends State<SongScreen> {
       // started flag: false until ESP flips it to true
       data["started"] = false;
 
-      data["statusMessage"] = "Starting...";
+      data["statusMessage"] = "Loading...";
       data["metronome"] = _metronomeOn;
       data["speed"] = _chosenSpeed;
       data["segments"] = _segments;
@@ -860,15 +863,26 @@ class _SongScreenState extends State<SongScreen> {
                           ),
                         ),
 
-                      if (_statusMessage.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 8),
-                          child: Text(
-                            _statusMessage,
-                            style: const TextStyle(color: Colors.white54),
-                            textAlign: TextAlign.center,
+                        if (isLoadingMine)
+                        const Padding(
+                          padding: EdgeInsets.only(top: 8),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Text(
+                                "Loading...",
+                                style: TextStyle(color: Colors.white54),
+                              ),
+                              SizedBox(width: 10),
+                              SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2.5),
+                              ),
+                            ],
                           ),
                         ),
+
 
                       const SizedBox(height: 8),
                     ],
@@ -1103,7 +1117,7 @@ class _ModeCirclesRow extends StatelessWidget {
       children: [
         Expanded(
           child: _GreenModeCircle(
-            title: "Memorize\nSong",
+            title: "Interactive\nSong",
             selected: selected == _PlayMode.memorize,
             isPlayingMine: isPlayingMine && selected == _PlayMode.memorize,
             isLoading: isLoadingMine && selected == _PlayMode.memorize,
