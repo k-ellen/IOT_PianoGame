@@ -200,7 +200,10 @@ class _SearchScreenState extends State<SearchScreen> {
                           final sp = handVal['storagePath'];
                           if (sp is! String || sp.isEmpty) return;
 
-                          final hand = _cleanHands(handKey);
+                          final String source = (d['source'] ?? '').toString();
+                          final bool isUserUpload = source == 'user';
+
+                          final String hand = isUserUpload ? 'UNKNOWN' : _cleanHands(handKey);
 
                           final String title =
                         (d['name'] ?? d['title'] ?? 'Unknown').toString();
@@ -211,6 +214,7 @@ class _SearchScreenState extends State<SearchScreen> {
                     final String genreRaw =
                         (d['genre'] ?? 'Unknown').toString();
 
+                  
 
                           variants.add(
                           SongVariant(

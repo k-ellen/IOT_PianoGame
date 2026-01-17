@@ -53,7 +53,7 @@ class _SongScreenState extends State<SongScreen> {
 
   // ----------- RTDB play state -----------
   bool _isPlaying = false; // status == "playing"
-  bool _isStarted = true;  // started == true from ESP (true means "actually started")
+  bool _isStarted = true; // started == true from ESP (true means "actually started")
   String _statusMessage = "";
 
   String _ownerUid = '';
@@ -120,15 +120,10 @@ class _SongScreenState extends State<SongScreen> {
       final String status = (data["status"] ?? "stopped").toString();
       final bool playing = status == "playing";
 
-      // IMPORTANT:
-      // You want status to be "playing" immediately on tap,
-      // so the ESP must update another field to say "actually started".
-      // We'll use RTDB field: started (bool).
       // App sets started=false when sending song, ESP sets started=true when it REALLY starts.
       final bool started = (data["started"] as bool?) ?? true;
 
       final String msg = (data["statusMessage"] ?? "").toString();
-
       final String ownerUid = (data["ownerUid"] ?? "").toString();
 
       setState(() {
@@ -140,13 +135,12 @@ class _SongScreenState extends State<SongScreen> {
         _ownerName = (data["ownerName"] ?? "").toString();
         _ownerSongTitle = (data["ownerSongTitle"] ?? "").toString();
 
-        // If we are not the owner anymore, clear local mode selection (optional)
         final bool someoneElseIsOwner =
-    ownerUid.isNotEmpty && ownerUid != _myUid;
+            ownerUid.isNotEmpty && ownerUid != _myUid;
 
-if (someoneElseIsOwner && _mode != null) {
-  _mode = null;
-}
+        if (someoneElseIsOwner && _mode != null) {
+          _mode = null;
+        }
       });
 
       // cancel timeout if song actually started or stopped
@@ -238,7 +232,41 @@ if (someoneElseIsOwner && _mode != null) {
     return 2; // simon
   }
 
+  // --------- NEW: global hands check (minimal change) ----------
+  bool _songHasOneHand(Map<String, dynamic> diffs) {
+    for (final entry in diffs.entries) {
+      final Map<String, dynamic> diffObj =
+          entry.value as Map<String, dynamic>? ?? <String, dynamic>{};
+      final Map<String, dynamic> handsObj =
+          diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
+
+      for (final h in handsObj.entries) {
+        final String handLabel = _cleanHandsLabel(h.key.toString());
+        if (_isUnknownValue(handLabel)) continue;
+        if (handLabel == 'LEFT' || handLabel == 'RIGHT') return true;
+      }
+    }
+    return false;
+  }
+
+  bool _songHasTwoHands(Map<String, dynamic> diffs) {
+    for (final entry in diffs.entries) {
+      final Map<String, dynamic> diffObj =
+          entry.value as Map<String, dynamic>? ?? <String, dynamic>{};
+      final Map<String, dynamic> handsObj =
+          diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
+
+      for (final h in handsObj.entries) {
+        final String handLabel = _cleanHandsLabel(h.key.toString());
+        if (_isUnknownValue(handLabel)) continue;
+        if (handLabel == 'BOTH') return true;
+      }
+    }
+    return false;
+  }
+
   // ---------------- recompute storage path ----------------
+  // MINIMAL FIX: if no path found in selected difficulty, fallback to ANY difficulty.
   void _recomputeStoragePath() {
     final Map<String, dynamic> diffs = _lastDiffs;
     if (diffs.isEmpty) {
@@ -246,7 +274,9 @@ if (someoneElseIsOwner && _mode != null) {
       return;
     }
 
-    final List<String> candidateRawDiffKeys = <String>[];
+    List<String> candidateRawDiffKeys = <String>[];
+
+    // 1) try selected difficulty first (as before)
     for (final entry in diffs.entries) {
       final String rawKey = entry.key.toString();
       final String label = _cleanDifficulty(rawKey);
@@ -259,9 +289,20 @@ if (someoneElseIsOwner && _mode != null) {
       }
     }
 
-    String bestPath = '';
+    String bestPath = _findPathInRawDiffKeys(diffs, candidateRawDiffKeys);
 
-    for (final String rawDiffKey in candidateRawDiffKeys) {
+    // 2) fallback: if not found, search all difficulties
+    if (bestPath.isEmpty) {
+      candidateRawDiffKeys = diffs.keys.map((e) => e.toString()).toList();
+      bestPath = _findPathInRawDiffKeys(diffs, candidateRawDiffKeys);
+    }
+
+    _currentStoragePath = bestPath;
+  }
+
+  String _findPathInRawDiffKeys(
+      Map<String, dynamic> diffs, List<String> rawDiffKeys) {
+    for (final String rawDiffKey in rawDiffKeys) {
       final Map<String, dynamic> diffObj =
           diffs[rawDiffKey] as Map<String, dynamic>? ?? <String, dynamic>{};
       final Map<String, dynamic> handsObj =
@@ -280,19 +321,11 @@ if (someoneElseIsOwner && _mode != null) {
         final bool isTwo = (handLabel == 'BOTH');
         final bool wantTwo = (_handsChoice == _HandsChoice.twoHands);
 
-        if (wantTwo && isTwo) {
-          bestPath = p;
-          break;
-        }
-        if (!wantTwo && !isTwo) {
-          bestPath = p;
-          break;
-        }
+        if (wantTwo && isTwo) return p;
+        if (!wantTwo && !isTwo) return p;
       }
-      if (bestPath.isNotEmpty) break;
     }
-
-    _currentStoragePath = bestPath;
+    return '';
   }
 
   // ===================== START/STOP with lock =====================
@@ -323,10 +356,7 @@ if (someoneElseIsOwner && _mode != null) {
       data["fileToPlay"] = path;
       data["playMode"] = _playModeToInt(_mode);
 
-      // IMPORTANT: you asked to set playing immediately
       data["status"] = "playing";
-
-      // started flag: false until ESP flips it to true
       data["started"] = false;
 
       data["statusMessage"] = "Loading...";
@@ -334,7 +364,6 @@ if (someoneElseIsOwner && _mode != null) {
       data["speed"] = _chosenSpeed;
       data["segments"] = _segments;
 
-      // owner fields
       data["ownerUid"] = _myUid;
       data["ownerName"] = _myName;
       data["ownerSongId"] = widget.songId;
@@ -350,7 +379,6 @@ if (someoneElseIsOwner && _mode != null) {
   }
 
   Future<void> _stopPlaybackAndResetUI({bool clearMode = true}) async {
-    // Stop and clear started flag
     await _playRef.update({
       "status": "stopped",
       "started": true,
@@ -363,7 +391,6 @@ if (someoneElseIsOwner && _mode != null) {
       "segments": _segments,
     });
 
-    // clear owner fields
     await _playRef.update({
       "ownerUid": "",
       "ownerName": "",
@@ -522,7 +549,6 @@ if (someoneElseIsOwner && _mode != null) {
       return;
     }
 
-    // Stop (works גם בזמן "טעינה" כי status כבר playing)
     if (_isPlayingMine) {
       final bool stop = await _showStopSongDialog();
       if (!stop) return;
@@ -536,7 +562,6 @@ if (someoneElseIsOwner && _mode != null) {
       return;
     }
 
-    // Start with lock
     final bool ok = await _tryStartPlayingWithLock(path);
     if (!ok) {
       await _showSomeoneElsePlayingDialog();
@@ -553,12 +578,10 @@ if (someoneElseIsOwner && _mode != null) {
 
     await _armOnDisconnectIfConnected();
 
-    // Timeout: if ESP never flips started=true
     _startTimeout?.cancel();
     _startTimeout = Timer(const Duration(seconds: 20), () async {
       if (!mounted) return;
 
-      // if still mine, still playing, but not started => stop
       if (_isStartingMine) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("The piano didn't start (timeout).")),
@@ -572,13 +595,11 @@ if (someoneElseIsOwner && _mode != null) {
   Future<void> _onModeCirclePressed(_PlayMode m) async {
     if (_someoneElseUsingPiano) return;
 
-    // If tapping same mode while mine is playing (or starting) => stop
     if (_isPlayingMine && _mode == m) {
-      await _startOrStop(); // will stop
+      await _startOrStop();
       return;
     }
 
-    // Change mode while playing -> stop first then start new
     if (_isPlayingMine && _mode != m) {
       final bool stop = await _showStopSongDialog();
       if (!stop) return;
@@ -591,7 +612,6 @@ if (someoneElseIsOwner && _mode != null) {
       _mode = m;
     });
 
-    // Update mode fields (optional)
     await _playRef.update({
       "playMode": _playModeToInt(_mode),
       "uiMode": _mode?.name ?? "",
@@ -600,7 +620,6 @@ if (someoneElseIsOwner && _mode != null) {
       "segments": _segments,
     });
 
-    // Start now
     await _startOrStop();
   }
 
@@ -725,35 +744,41 @@ if (someoneElseIsOwner && _mode != null) {
                     initialChoiceFound = _HandsChoice.oneHand;
                   }
                 }
-
               }
             }
 
-            final bool showHandsSelector = hasOneHand && hasTwoHands;
+            // MINIMAL FIX: show hands selector based on whole song (not only selected difficulty)
+            final bool showHandsSelector =
+                _songHasOneHand(diffs) && _songHasTwoHands(diffs);
 
-           if (!_userPickedHands) {
-            if (!_didInitHandsChoiceFromInitial) {
-              if (initialChoiceFound != null) {
-                _handsChoice = initialChoiceFound!;
-              } else {
-                if (showHandsSelector) {
-                  _handsChoice =
-                      (initialHandsClean == 'BOTH') ? _HandsChoice.twoHands : _HandsChoice.oneHand;
-                } else if (hasTwoHands && !hasOneHand) {
-                  _handsChoice = _HandsChoice.twoHands;
-                } else if (hasOneHand && !hasTwoHands) {
-                  _handsChoice = _HandsChoice.oneHand;
+            if (!_userPickedHands) {
+              if (!_didInitHandsChoiceFromInitial) {
+                if (initialChoiceFound != null) {
+                  _handsChoice = initialChoiceFound!;
+                } else {
+                  if (showHandsSelector) {
+                    _handsChoice = (initialHandsClean == 'BOTH')
+                        ? _HandsChoice.twoHands
+                        : _HandsChoice.oneHand;
+                  } else if (_songHasTwoHands(diffs) && !_songHasOneHand(diffs)) {
+                    _handsChoice = _HandsChoice.twoHands;
+                  } else if (_songHasOneHand(diffs) && !_songHasTwoHands(diffs)) {
+                    _handsChoice = _HandsChoice.oneHand;
+                  }
                 }
+                _didInitHandsChoiceFromInitial = true;
               }
-              _didInitHandsChoiceFromInitial = true;
             }
-          }
-
 
             if (!_userPickedHands && !showHandsSelector) {
-              if (hasTwoHands && !hasOneHand) _handsChoice = _HandsChoice.twoHands;
-              if (hasOneHand && !hasTwoHands) _handsChoice = _HandsChoice.oneHand;
+              if (_songHasTwoHands(diffs) && !_songHasOneHand(diffs)) {
+                _handsChoice = _HandsChoice.twoHands;
+              }
+              if (_songHasOneHand(diffs) && !_songHasTwoHands(diffs)) {
+                _handsChoice = _HandsChoice.oneHand;
+              }
             }
+
             _recomputeStoragePath();
             final bool canPlay = _currentStoragePath.isNotEmpty;
             final bool circlesEnabled = canPlay && !_someoneElseUsingPiano;
@@ -763,9 +788,7 @@ if (someoneElseIsOwner && _mode != null) {
             final double coverHeight = screenHeight * 0.25;
             final double coverWidth = screenWidth * 0.6;
 
-            // your requested flag:
-            // loader shows while this is true
-            final bool isStart = _isStarted; // true means started
+            final bool isStart = _isStarted;
             final bool isLoadingMine = _isPlayingMine && !isStart;
 
             return Stack(
@@ -829,33 +852,33 @@ if (someoneElseIsOwner && _mode != null) {
                       ],
 
                       _SettingsRow(
-                      speed: _chosenSpeed,
-                      showHands: showHandsSelector,
-                      hands: _handsChoice,
-                      metronomeOn: _metronomeOn,
-                      segments: _segments,
-                      onSpeedTap: () {},
-                      onHandsTap: showHandsSelector
-                          ? () async {
-                              if (_isPlayingMine) {
-                                final bool stop = await _showStopSongDialog();
-                                if (!stop) return;
-                                await _stopPlaybackAndResetUI(clearMode: false);
-                              }
+                        speed: _chosenSpeed,
+                        showHands: showHandsSelector,
+                        hands: _handsChoice,
+                        metronomeOn: _metronomeOn,
+                        segments: _segments,
+                        onSpeedTap: () {},
+                        onHandsTap: showHandsSelector
+                            ? () async {
+                                if (_isPlayingMine) {
+                                  final bool stop = await _showStopSongDialog();
+                                  if (!stop) return;
+                                  await _stopPlaybackAndResetUI(clearMode: false);
+                                }
 
-                              setState(() {
+                                setState(() {
                                   _userPickedHands = true;
-                                _handsChoice = (_handsChoice == _HandsChoice.oneHand)
-                                    ? _HandsChoice.twoHands
-                                    : _HandsChoice.oneHand;
-                              });
+                                  _handsChoice = (_handsChoice == _HandsChoice.oneHand)
+                                      ? _HandsChoice.twoHands
+                                      : _HandsChoice.oneHand;
+                                });
 
-                              _recomputeStoragePath(); 
-                            }
-                          : null,
-                      onMetronomeTap: () {},
-                      onSegmentsTap: () {},
-                    ),
+                                _recomputeStoragePath();
+                              }
+                            : null,
+                        onMetronomeTap: () {},
+                        onSegmentsTap: () {},
+                      ),
 
                       const SizedBox(height: 55),
 
@@ -885,7 +908,7 @@ if (someoneElseIsOwner && _mode != null) {
                           ),
                         ),
 
-                        if (isLoadingMine)
+                      if (isLoadingMine)
                         const Padding(
                           padding: EdgeInsets.only(top: 8),
                           child: Row(
@@ -904,7 +927,6 @@ if (someoneElseIsOwner && _mode != null) {
                             ],
                           ),
                         ),
-
 
                       const SizedBox(height: 8),
                     ],
@@ -970,7 +992,8 @@ class _SettingsRow extends StatelessWidget {
             icon: Icons.pan_tool,
             onTap: showHands ? onHandsTap : null,
             disabled: !showHands,
-            customIcon: showHands ? _HandsIcon(twoHands: hands == _HandsChoice.twoHands) : null,
+            customIcon:
+                showHands ? _HandsIcon(twoHands: hands == _HandsChoice.twoHands) : null,
           ),
         ),
         const SizedBox(width: 10),

@@ -140,8 +140,7 @@ class _UploadScreenState extends State<UploadScreen> {
          'UNKNOWN': {
           'hands': {
       'BOTH':  {'storagePath': storagePath},
-      'LEFT':  {'storagePath': storagePath},
-      'RIGHT': {'storagePath': storagePath},
+    
     },
         },
       },
