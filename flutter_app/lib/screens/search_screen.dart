@@ -202,18 +202,28 @@ class _SearchScreenState extends State<SearchScreen> {
 
                           final hand = _cleanHands(handKey);
 
+                          final String title =
+                        (d['name'] ?? d['title'] ?? 'Unknown').toString();
+
+                    final String artist =
+                        (d['artist'] ?? 'Unknown').toString();
+
+                    final String genreRaw =
+                        (d['genre'] ?? 'Unknown').toString();
+
+
                           variants.add(
-                            SongVariant(
-                              title: (d['name'] ?? '') as String,
-                              artist: (d['artist'] ?? '') as String,
-                              genre: _cleanGenre(d['genre']),
-                              difficulty: diff,
-                              hands: hand,
-                              storagePath: sp,
-                              sourceCollection: 'songsNEW_midi',
-                              songId: doc.id,
-                            ),
-                          );
+                          SongVariant(
+                            title: title,
+                            artist: artist,
+                            genre: _cleanGenre(genreRaw),
+                            difficulty: diff,
+                            hands: hand,
+                            storagePath: sp,
+                            sourceCollection: 'songsNEW_midi',
+                            songId: doc.id,
+                          ),
+                        );
                         });
                       });
                     }

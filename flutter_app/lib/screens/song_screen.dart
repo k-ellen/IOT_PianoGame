@@ -93,6 +93,7 @@ class _SongScreenState extends State<SongScreen> {
   _PlayMode? _mode; // selected mode for circles
 
   bool _didInitHandsChoiceFromInitial = false;
+  bool _userPickedHands = false;
 
   // if ESP never flips started=true, we can timeout and stop
   Timer? _startTimeout;
@@ -716,7 +717,7 @@ if (someoneElseIsOwner && _mode != null) {
                   hasOneHand = true;
                 }
 
-                if (!_didInitHandsChoiceFromInitial) {
+                if (!_userPickedHands && !_didInitHandsChoiceFromInitial) {
                   if (initialHandsClean == 'BOTH' && handLabel == 'BOTH') {
                     initialChoiceFound = _HandsChoice.twoHands;
                   } else if ((initialHandsClean == 'RIGHT' || initialHandsClean == 'LEFT') &&
@@ -724,11 +725,13 @@ if (someoneElseIsOwner && _mode != null) {
                     initialChoiceFound = _HandsChoice.oneHand;
                   }
                 }
+
               }
             }
 
             final bool showHandsSelector = hasOneHand && hasTwoHands;
 
+           if (!_userPickedHands) {
             if (!_didInitHandsChoiceFromInitial) {
               if (initialChoiceFound != null) {
                 _handsChoice = initialChoiceFound!;
@@ -744,12 +747,13 @@ if (someoneElseIsOwner && _mode != null) {
               }
               _didInitHandsChoiceFromInitial = true;
             }
+          }
 
-            if (!showHandsSelector) {
+
+            if (!_userPickedHands && !showHandsSelector) {
               if (hasTwoHands && !hasOneHand) _handsChoice = _HandsChoice.twoHands;
               if (hasOneHand && !hasTwoHands) _handsChoice = _HandsChoice.oneHand;
             }
-
             _recomputeStoragePath();
             final bool canPlay = _currentStoragePath.isNotEmpty;
             final bool circlesEnabled = canPlay && !_someoneElseUsingPiano;
@@ -815,6 +819,7 @@ if (someoneElseIsOwner && _mode != null) {
                               setState(() {
                                 _selectedDifficulty = v;
                                 _didInitHandsChoiceFromInitial = false;
+                                _userPickedHands = false;
                               });
                               _recomputeStoragePath();
                             },
@@ -824,16 +829,33 @@ if (someoneElseIsOwner && _mode != null) {
                       ],
 
                       _SettingsRow(
-                        speed: _chosenSpeed,
-                        showHands: showHandsSelector,
-                        hands: _handsChoice,
-                        metronomeOn: _metronomeOn,
-                        segments: _segments,
-                        onSpeedTap: () {},     // keep your existing dialogs if you want
-                        onHandsTap: null,       // keep your existing logic if you want
-                        onMetronomeTap: () {},
-                        onSegmentsTap: () {},
-                      ),
+                      speed: _chosenSpeed,
+                      showHands: showHandsSelector,
+                      hands: _handsChoice,
+                      metronomeOn: _metronomeOn,
+                      segments: _segments,
+                      onSpeedTap: () {},
+                      onHandsTap: showHandsSelector
+                          ? () async {
+                              if (_isPlayingMine) {
+                                final bool stop = await _showStopSongDialog();
+                                if (!stop) return;
+                                await _stopPlaybackAndResetUI(clearMode: false);
+                              }
+
+                              setState(() {
+                                  _userPickedHands = true;
+                                _handsChoice = (_handsChoice == _HandsChoice.oneHand)
+                                    ? _HandsChoice.twoHands
+                                    : _HandsChoice.oneHand;
+                              });
+
+                              _recomputeStoragePath(); 
+                            }
+                          : null,
+                      onMetronomeTap: () {},
+                      onSegmentsTap: () {},
+                    ),
 
                       const SizedBox(height: 55),
 
