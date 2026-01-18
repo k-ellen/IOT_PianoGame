@@ -72,6 +72,12 @@ extern void checkMidi();
 // =====================================================
 // HELPERS
 // =====================================================
+static bool areAnyNotesStillHeld() {
+  for (int i = 0; i < 128; i++) {
+    if (notesPressed[i]) return true;
+  }
+  return false;
+}
 
 static void followCountIn(uint32_t tempoUS, uint8_t firstNote) {
   const int BEATS = 4;          // 1 bar
@@ -326,7 +332,11 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
 
     if (ev.type == MIDI_END) break;
     if (absTicks < segStart) continue;
-    if (segEnd != (uint64_t)(-1) && absTicks >= segEnd) break;
+
+    if (segEnd != (uint64_t)(-1) && absTicks >= segEnd) {
+      // MIDI finished, but DO NOT leave practice yet
+      break;
+    }
 
     uint64_t deltaTicks = absTicks - globalTicks;
     if (deltaTicks > 0) {
@@ -375,6 +385,26 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
       }
     }
   }
+
+  // ================================
+  // WAIT FOR USER TO RELEASE LAST NOTE
+  // ================================
+  Serial.println("🎹 Waiting for final note release...");
+
+  while (!stopRequested) {
+    checkMidi();
+    FirebaseControl_checkStop();
+
+    // Only finish when:
+    // 1. Song has no more notes
+    // 2. User released all keys
+    if (!areAnyNotesUnsatisfied() && !areAnyNotesStillHeld()) {
+      break;
+    }
+
+    delay(5);
+  }
+
 
   Audio_setMetronomeConfig(0, 0); // turn off at the end of the segment
 
