@@ -1,6 +1,7 @@
 #include "AudioEngine.h"
 #include "Config.h"
 #include "PlayMode.h"
+#include "FirebaseControl.h"
 
 #include <Arduino.h>
 #include <driver/i2s.h>
@@ -309,6 +310,7 @@ void Audio_playEffect(const char* filename) {
   File file = SD.open(filename);
   if (!file) {
     Serial.printf("❌ Audio_playEffect: Failed to open %s\n", filename);
+    FirebaseControl_reportFailure("Failed to open Audio file");
     synthPaused = false; // Resume synth immediately if file fails
     return;
   }

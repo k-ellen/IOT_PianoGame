@@ -453,6 +453,7 @@ static void playVisualSong(const String& path) {
 
   midi2.close();
 
+  FirebaseControl_setStarted(true);
   followCountIn(tempoUS, firstNote);
 
   MidiParser midi;
@@ -559,6 +560,7 @@ void Player_playSong(const String &path) {
   }
   else if (currentMode == MODE_SIMON) {
     int count = buildSegmentsByBars(path, segments, MAX_SEGMENTS, g_memorizeBarsPerSegment);
+    FirebaseControl_setStarted(true);
     Audio_playEffect("/feedback/repeat.wav");
     for (int r = 0; r < count && !stopRequested; r++) {
       while (!stopRequested) {
@@ -589,8 +591,11 @@ void Player_playSong(const String &path) {
 
     if (segmentCount <= 0) {
       Serial.println("❌ Segment build failed.");
+      FirebaseControl_reportFailure("Failed to split song into segments");
       return;
     }
+
+    FirebaseControl_setStarted(true);
     Audio_playEffect("/feedback/put_out.wav");
     
     // Loop through segments

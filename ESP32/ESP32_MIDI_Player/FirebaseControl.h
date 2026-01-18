@@ -12,3 +12,7 @@ bool FirebaseControl_downloadToSD(const String &remotePath,
 void FirebaseControl_checkStop();
 
 void FirebaseControl_setStatus(const String &status);
+
+void FirebaseControl_setStarted(bool started);
+
+void FirebaseControl_reportFailure(const String& reason);

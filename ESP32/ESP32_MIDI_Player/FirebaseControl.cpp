@@ -170,3 +170,36 @@ void FirebaseControl_setStatus(const String &status) {
     Firebase.RTDB.setString(&fbdo, "/esp32API/playCommand/status", status);
   }
 }
+
+void FirebaseControl_setStarted(bool started) {
+  if (!Firebase.ready()) return;
+
+  Serial.printf("📡 Playback started flag = %s\n", started ? "true" : "false");
+
+  Firebase.RTDB.setBool(
+    &fbdo,
+    "/esp32API/playCommand/started",
+    started
+  );
+}
+
+void FirebaseControl_reportFailure(const String& reason) {
+  if (!Firebase.ready()) return;
+
+  Serial.printf("📡 Reporting failure to app: %s\n", reason.c_str());
+
+  // Human-readable failure reason for UI
+  Firebase.RTDB.setString(
+    &fbdo,
+    "/esp32API/playCommand/lastFailure",
+    reason
+  );
+
+  // Optional numeric counter (for analytics)
+  Firebase.RTDB.setInt(
+    &fbdo,
+    "/esp32API/playCommand/failureCounter",
+    millis()
+  );
+}
+

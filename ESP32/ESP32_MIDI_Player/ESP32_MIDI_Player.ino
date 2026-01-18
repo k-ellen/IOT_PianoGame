@@ -32,17 +32,6 @@ void checkMidi() {
 // REAL-TIME MIDI CALLBACKS
 // =======================
 
-// static void handleNoteOn(byte channel, byte note, byte velocity) {
-//   if (note < FIRST_KEY || note > LAST_KEY) return;
-
-//   if (currentMode == MODE_LEARN) {
-//     Player_onNoteOn(note);
-//   } else if (currentMode == MODE_FREE) {
-//     // Free play: LED + Synth
-//     Led_noteOn(note, 0x00B400);          // Green
-//     Audio_noteOn(note, velocity);
-//   }
-// }
 static void handleNoteOn(byte channel, byte note, byte velocity) {
   // 1. Bounds Check (Your logic)
   if (note < FIRST_KEY || note > LAST_KEY) return;
@@ -68,16 +57,6 @@ static void handleNoteOn(byte channel, byte note, byte velocity) {
   }
 }
 
-// static void handleNoteOff(byte channel, byte note, byte velocity) {
-//   if (note < FIRST_KEY || note > LAST_KEY) return;
-
-//   if (currentMode == MODE_LEARN) {
-//     Player_onNoteOff(note);
-//   } else if (currentMode == MODE_FREE) {
-//     Led_noteOff(note);
-//     Audio_noteOff(note);
-//   }
-// }
 static void handleNoteOff(byte channel, byte note, byte velocity) {
   if (note < FIRST_KEY || note > LAST_KEY) return;
 
@@ -118,7 +97,10 @@ static void initSD() {
   bool sdOk = SD.begin(SD_CS_PIN);
   SdLock_give();
 
-  if (!sdOk) Serial.println("❌ SD init failed");
+  if (!sdOk) {
+    Serial.println("❌ SD init failed");
+    FirebaseControl_reportFailure("SD card initialization failed");
+  }
   else Serial.println("✅ SD ready");
 }
 
@@ -167,6 +149,7 @@ void loop() {
     String localPath;
     if (!FirebaseControl_downloadToSD(remotePath, localPath)) {
       Serial.println("❌ Failed to download MIDI file");
+      FirebaseControl_reportFailure("Failed to download MIDI file");
       return;
     }
 
