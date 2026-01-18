@@ -189,9 +189,23 @@ void Player_onNoteOn(uint8_t note) {
 
 void Player_onNoteOff(uint8_t note) {
   if (note < FIRST_KEY || note > LAST_KEY) return;
+
+  // Track physical key release during practice
+  if (isLearningMode || currentMode == MODE_SIMON) {
+    notesPressed[note] = false;
+
+    // Only turn off LED if song ALSO released it
+    if (!notesToPlay[note] && notesSatisfied[note]) {
+      Led_noteOff(note);
+      notesSatisfied[note] = false;
+    }
+    return;
+  }
+
   Led_noteOff(note);
   if (currentMode == MODE_FREE) Audio_noteOff(note);
 }
+
 
 // =====================================================
 // SHARED DEMO (MEMORIZE + SIMON)
@@ -345,15 +359,16 @@ static void practiceSegment(const String& path, uint64_t segStart, uint64_t segE
       if (!isSimon) {
         Led_noteOn(ev.note, color);
       }
-      // Led_noteOn(ev.note, color);
     } else if (ev.type == MIDI_NOTE_OFF) {
       notesToPlay[ev.note] = false;
-      if (!isSimon) {
-        if (notesSatisfied[ev.note]) Led_noteOff(ev.note);
+
+      // Only clear green when USER also released key
+      if (!notesPressed[ev.note] && notesSatisfied[ev.note]) {
+        Led_noteOff(ev.note);
+        notesSatisfied[ev.note] = false;
       }
-      if (notesSatisfied[ev.note]) Led_noteOff(ev.note);
-      notesSatisfied[ev.note] = false;
-    } else if (ev.type == MIDI_TEMPO) {
+    }
+    else if (ev.type == MIDI_TEMPO) {
       tempoUS = ev.tempoUS;
       if (g_metronomeEnabled) {
          Audio_setMetronomeConfig(tempoUS, 1.0f);
