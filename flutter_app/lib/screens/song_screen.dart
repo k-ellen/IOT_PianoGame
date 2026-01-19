@@ -37,6 +37,38 @@ class SongScreen extends StatefulWidget {
 }
 
 class _SongScreenState extends State<SongScreen> {
+
+  String _difficultyFromPath({
+  required Map<String, dynamic> diffs,
+  required String path,
+}) {
+  if (diffs.isEmpty || path.isEmpty) return _selectedDifficulty;
+
+  for (final diffEntry in diffs.entries) {
+    final String diffKeyRaw = diffEntry.key.toString();
+
+    final Map<String, dynamic> diffObj =
+        diffEntry.value as Map<String, dynamic>? ?? <String, dynamic>{};
+
+    final Map<String, dynamic> handsObj =
+        diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
+
+    for (final handEntry in handsObj.entries) {
+      final Map<String, dynamic> handObj =
+          handEntry.value as Map<String, dynamic>? ?? <String, dynamic>{};
+
+      final String sp = (handObj['storagePath'] as String?) ?? '';
+      if (sp == path) {
+        return _cleanDifficulty(diffKeyRaw);
+      }
+    }
+  }
+
+  return _selectedDifficulty;
+}
+
+
+
   // =====================
   // Firebase RTDB refs
   // =====================
@@ -210,6 +242,7 @@ class _SongScreenState extends State<SongScreen> {
 
     return 'UNKNOWN';
   }
+
 
   String _cleanHandsLabel(dynamic raw) {
     final String u = (raw ?? '')
@@ -782,11 +815,23 @@ class _SongScreenState extends State<SongScreen> {
 
     final User? u = FirebaseAuth.instance.currentUser;
     if (u != null) {
-      await StatsService(FirebaseFirestore.instance).onStartSong(
+      final stats = StatsService(FirebaseFirestore.instance);
+
+      await stats.ensureGeneralStats(u.uid); 
+
+      final String effectiveDifficulty = _difficultyFromPath(
+      diffs: _lastDiffs,
+      path: path,
+    );
+
+      await stats.onStartSong(
         uid: u.uid,
         songId: widget.songId,
+        difficultyLabel: effectiveDifficulty,
       );
+
     }
+
 
     await _armOnDisconnectIfConnected();
 
@@ -914,14 +959,14 @@ class _SongScreenState extends State<SongScreen> {
 
             final bool showDifficultySelector = diffLabels.length > 1;
 
-            if (diffLabels.isNotEmpty) {
-              if (!diffLabels.contains(_selectedDifficulty)) {
+            if (diffLabels.isNotEmpty && !diffLabels.contains(_selectedDifficulty)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() {
                 _selectedDifficulty = diffLabels.first;
-              }
-            } else {
-              _selectedDifficulty = 'UNKNOWN';
-            }
-
+              });
+            });
+          }
             final List<String> selectedRawDiffKeys =
                 rawKeysByDiffLabel[_selectedDifficulty] ?? <String>[];
 

@@ -182,7 +182,7 @@ class UserScreen extends StatelessWidget {
                     final String lastPlayedSongId = _toStr(stats['lastPlayedSongId']);
 
                     final int learnedSongsCount = _toInt(stats['learnedSongsCount']);
-                    final int hardLearnedSongsCount = _toInt(stats['hardLearnedSongsCount']);
+                    final int hardPlaysCount = _toInt(stats['hardPlaysCount']);
 
                     return FutureBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                       future: userRef.get(),
@@ -204,7 +204,7 @@ class UserScreen extends StatelessWidget {
                                 subtitle: '',
                                 learnedSongsCount: learnedSongsCount,
                                 currentStreakDays: currentStreakDays,
-                                hardLearnedSongsCount: hardLearnedSongsCount,
+                                hardLearnedSongsCount: hardPlaysCount,
                                 totalPlaysCount: totalPlaysCount,
                               ),
                               const SizedBox(height: 24),
@@ -212,12 +212,7 @@ class UserScreen extends StatelessWidget {
                                 padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                                 child: Column(
                                   children: [
-                                    _DarkStatCard(
-                                      title: 'Total practice time',
-                                      value: _formatSeconds(totalPracticeSeconds),
-                                      icon: Icons.timer_outlined,
-                                    ),
-                                    const SizedBox(height: 12),
+                                    
                                     _DarkStatCard(
                                       title: 'Last practice date',
                                       value: lastPracticeDate.trim().isEmpty ? '-' : lastPracticeDate,
