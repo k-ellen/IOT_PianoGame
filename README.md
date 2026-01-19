@@ -19,7 +19,7 @@ The app allows the user to choose the pace at which they want to learn, in the m
 * Parameters: contains description of parameters and settings that can be modified IN YOUR CODE
 * Assets: link to 3D printed parts, Audio files used in this project, Fritzing file for connection diagram (FZZ format) etc
 
-## ESP32 SDK version used in this project: 
+## ESP32 SDK version used in this project: 2.0.17
 
 ## Arduino/ESP32 libraries used in this project:
 * Adrafruit NeoPixel - version 1.15.2
