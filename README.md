@@ -1,4 +1,4 @@
-\## Smart Piano Trainer Project by :  Ellen Kagan, Yarden Keshet, Maayan Lavi
+## Smart Piano Trainer Project by :  Ellen Kagan, Yarden Keshet, Maayan Lavi
 
 Smart Piano Trainer is an IoT based piano learning system that combines physical LED enabled piano with a mobile application to guide users through interactive learning modes.
 
