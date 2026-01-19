@@ -15,10 +15,11 @@ class SearchScreen extends StatefulWidget {
 }
 
 class _SearchScreenState extends State<SearchScreen> {
+
   // ================= FILTER STATE =================
   Set<String> _selectedGenres = {};
   String? _selectedDifficulty; // single select
-  String? _selectedHands;      // single select
+  String? _selectedHands; // single select
 
   // ================= AVAILABLE OPTIONS =================
   List<String> _availableGenres = [];
@@ -30,10 +31,10 @@ class _SearchScreenState extends State<SearchScreen> {
 
   // Order for difficulties in UI
   static const List<String> _difficultyOrder = [
-    'SLOW EASY',
-    'EASY',
     'SLOW BEGINNER',
     'BEGINNER',
+    'SLOW EASY',
+    'EASY',
     'MEDIUM',
     'HARD',
     'ADVANCED',
@@ -51,6 +52,25 @@ class _SearchScreenState extends State<SearchScreen> {
     super.dispose();
   }
 
+  void _showSongBusyDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: Colors.black,
+        title: const Text('Song in Use', style: TextStyle(color: Colors.white)),
+        content: const Text(
+          'Another user is currently playing a song.\nPlease try again later.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
 
   String _cleanGenre(dynamic raw) {
     final s = (raw ?? '').toString().trim();
@@ -93,7 +113,6 @@ class _SearchScreenState extends State<SearchScreen> {
   }
 
   bool _isUnknown(String v) => v.trim().toUpperCase() == 'UNKNOWN';
-
 
   @override
   Widget build(BuildContext context) {
@@ -140,201 +159,224 @@ class _SearchScreenState extends State<SearchScreen> {
               const SizedBox(height: 16),
 
               Expanded(
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: FirebaseFirestore.instance
-                        .collection('songsNEW_midi')
-                        .snapshots(),
-                    builder: (context, snap2) {
-                      if (snap2.hasError) {
-                        return const Center(
-                          child: Text(
-                            'Error loading songs',
-                            style: TextStyle(color: Colors.white),
-                          ),
-                        );
-                      }
-
-                      if (!snap2.hasData) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-
-                      final variants = <SongVariant>[];
-
-                      // ========== ONLY collection: songsNEW_midi ==========
-                      for (final doc in snap2.data!.docs) {
-                        final d = doc.data() as Map<String, dynamic>;
-
-                        final diffs = d['difficulties'];
-                        if (diffs is! Map<String, dynamic>) continue;
-
-                        diffs.forEach((diffKey, diffVal) {
-                          if (diffVal is! Map<String, dynamic>) return;
-
-                          final handsObj = diffVal['hands'];
-                          if (handsObj is! Map<String, dynamic>) return;
-
-                          final diff = _cleanDifficulty(diffKey);
-
-                          handsObj.forEach((handKey, handVal) {
-                            if (handVal is! Map<String, dynamic>) return;
-
-                            final sp = handVal['storagePath'];
-                            if (sp is! String || sp.isEmpty) return;
-
-                            final hand = _cleanHands(handKey);
-
-                            variants.add(SongVariant(
-                              title: (d['name'] ?? '') as String,
-                              artist: (d['artist'] ?? '') as String,
-                              genre: _cleanGenre(d['genre']),
-                              difficulty: diff,
-                              hands: hand,
-                              storagePath: sp,
-                              sourceCollection: 'songsNEW_midi',
-                              songId: doc.id,
-                            ));
-                          });
-                        });
-                      }
-
-                      _availableGenres = variants
-                          .map((v) => v.genre)
-                          .where((g) => !_isUnknown(g) && g.trim().isNotEmpty)
-                          .toSet()
-                          .toList()
-                        ..sort();
-
-                      _availableDifficulties = variants
-                          .map((v) => v.difficulty)
-                          .where((d) => !_isUnknown(d))
-                          .toSet()
-                          .toList()
-                        ..sort((a, b) => _difficultyOrder
-                            .indexOf(a)
-                            .compareTo(_difficultyOrder.indexOf(b)));
-
-                      _availableHands = variants
-                          .map((v) => v.hands)
-                          .where((h) => !_isUnknown(h))
-                          .toSet()
-                          .toList()
-                        ..sort();
-
-                      _selectedGenres =
-                          _selectedGenres.intersection(_availableGenres.toSet());
-
-                      if (_selectedDifficulty != null &&
-                          !_availableDifficulties.contains(_selectedDifficulty)) {
-                        _selectedDifficulty = null;
-                      }
-
-                      if (_selectedHands != null &&
-                          !_availableHands.contains(_selectedHands)) {
-                        _selectedHands = null;
-                      }
-
-                      final filtered = variants.where((v) {
-                        if (_selectedGenres.isNotEmpty &&
-                            !_selectedGenres.contains(v.genre)) {
-                          return false;
-                        }
-
-                        if (_selectedDifficulty != null &&
-                            v.difficulty != _selectedDifficulty) {
-                          return false;
-                        }
-
-                        if (_selectedHands != null && v.hands != _selectedHands) {
-                          return false;
-                        }
-
-                        if (_searchText.isNotEmpty) {
-                          final q = _searchText;
-                          final inName = v.title.toLowerCase().contains(q);
-                          final inArtist = v.artist.toLowerCase().contains(q);
-                          if (!inName && !inArtist) return false;
-                        }
-
-                        return true;
-                      }).toList();
-
-                      if (filtered.isEmpty) {
-                        return const Center(
-                          child: Text(
-                            'No songs to show',
-                            style: TextStyle(color: Colors.white70),
-                          ),
-                        );
-                      }
-
-                      return Scrollbar(
-                        controller: _scrollController,
-                        thumbVisibility: true,
-                        child: ListView.builder(
-                          controller: _scrollController,
-                          itemCount: filtered.length,
-                          itemBuilder: (context, i) {
-                            final v = filtered[i];
-
-                            return SongTile(
-                              title: v.title,
-                              artist: v.artist,
-                              genre: v.genre,
-                              difficulties: v.difficulty,
-                              hands: v.hands,
-                              index: i,
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => SongScreen(
-                                      songId: v.songId,
-                                      title: v.title,
-                                      artist: v.artist,
-                                      initialDifficulty: v.difficulty,  
-                                      initialHands: v.hands,
-                                      
-                                    ),
-                                  ),
-                                );
-                              },
-                            );
-                          },
+                child: StreamBuilder<QuerySnapshot>(
+                  stream: FirebaseFirestore.instance
+                      .collection('songsNEW_midi')
+                      .snapshots(),
+                  builder: (context, snap2) {
+                    if (snap2.hasError) {
+                      return const Center(
+                        child: Text(
+                          'Error loading songs',
+                          style: TextStyle(color: Colors.white),
                         ),
                       );
-                    },
-                  ),
+                    }
+
+                    if (!snap2.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+
+                    final variants = <SongVariant>[];
+
+                    // ========== ONLY collection: songsNEW_midi ==========
+                    for (final doc in snap2.data!.docs) {
+                      final d = doc.data() as Map<String, dynamic>;
+
+                      final diffs = d['difficulties'];
+                      if (diffs is! Map<String, dynamic>) continue;
+
+                      diffs.forEach((diffKey, diffVal) {
+                        if (diffVal is! Map<String, dynamic>) return;
+
+                        final handsObj = diffVal['hands'];
+                        if (handsObj is! Map<String, dynamic>) return;
+
+                        final diff = _cleanDifficulty(diffKey);
+
+                        handsObj.forEach((handKey, handVal) {
+                          if (handVal is! Map<String, dynamic>) return;
+
+                          final sp = handVal['storagePath'];
+                          if (sp is! String || sp.isEmpty) return;
+
+                          final String source = (d['source'] ?? '').toString();
+                          final bool isUserUpload = source == 'user';
+
+                          final String hand = isUserUpload ? 'UNKNOWN' : _cleanHands(handKey);
+
+                          final String title =
+                        (d['name'] ?? d['title'] ?? 'Unknown').toString();
+
+                    final String artist =
+                        (d['artist'] ?? 'Unknown').toString();
+
+                    final String genreRaw =
+                        (d['genre'] ?? 'Unknown').toString();
+
+                  
+
+                          variants.add(
+                          SongVariant(
+                            title: title,
+                            artist: artist,
+                            genre: _cleanGenre(genreRaw),
+                            difficulty: diff,
+                            hands: hand,
+                            storagePath: sp,
+                            sourceCollection: 'songsNEW_midi',
+                            songId: doc.id,
+                          ),
+                        );
+                        });
+                      });
+                    }
+
+                    _availableGenres =
+                        variants
+                            .map((v) => v.genre)
+                            .where((g) => !_isUnknown(g) && g.trim().isNotEmpty)
+                            .toSet()
+                            .toList()
+                          ..sort();
+
+                    _availableDifficulties =
+                        variants
+                            .map((v) => v.difficulty)
+                            .where((d) => !_isUnknown(d))
+                            .toSet()
+                            .toList()
+                          ..sort(
+                            (a, b) => _difficultyOrder
+                                .indexOf(a)
+                                .compareTo(_difficultyOrder.indexOf(b)),
+                          );
+
+                    _availableHands =
+                        variants
+                            .map((v) => v.hands)
+                            .where((h) => !_isUnknown(h))
+                            .toSet()
+                            .toList()
+                          ..sort();
+
+                    _selectedGenres = _selectedGenres.intersection(
+                      _availableGenres.toSet(),
+                    );
+
+                    if (_selectedDifficulty != null &&
+                        !_availableDifficulties.contains(_selectedDifficulty)) {
+                      _selectedDifficulty = null;
+                    }
+
+                    if (_selectedHands != null &&
+                        !_availableHands.contains(_selectedHands)) {
+                      _selectedHands = null;
+                    }
+
+                    final filtered = variants.where((v) {
+                      if (_selectedGenres.isNotEmpty &&
+                          !_selectedGenres.contains(v.genre)) {
+                        return false;
+                      }
+
+                      if (_selectedDifficulty != null &&
+                          v.difficulty != _selectedDifficulty) {
+                        return false;
+                      }
+
+                      if (_selectedHands != null && v.hands != _selectedHands) {
+                        return false;
+                      }
+
+                      if (_searchText.isNotEmpty) {
+                        final q = _searchText;
+                        final inName = v.title.toLowerCase().contains(q);
+                        final inArtist = v.artist.toLowerCase().contains(q);
+                        if (!inName && !inArtist) return false;
+                      }
+
+                      return true;
+                    }).toList();
+
+                    if (filtered.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'No songs to show',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      );
+                    }
+
+                    return Scrollbar(
+                      controller: _scrollController,
+                      thumbVisibility: true,
+                      child: ListView.builder(
+                        controller: _scrollController,
+                        itemCount: filtered.length,
+                        itemBuilder: (context, i) {
+                          final v = filtered[i];
+
+                          return SongTile(
+                            title: v.title,
+                            artist: v.artist,
+                            genre: v.genre,
+                            difficulties: v.difficulty,
+                            hands: v.hands,
+                            index: i,
+                            onTap: () {
+                              if (!mounted) return;
+
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => SongScreen(
+                                    songId: v.songId,
+                                    title: v.title,
+                                    artist: v.artist,
+                                    initialDifficulty: v.difficulty,
+                                    initialHands: v.hands,
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                                                  },
+                      ),
+                    );
+                  },
                 ),
-            ]
+              ),
+            ],
           ),
         ),
       ),
-      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 1),
+      bottomNavigationBar: const MyBottomNavigationBar(currentIndex: 0),
     );
   }
 
   // ================= Buttons =================
 
- Widget _filterButton({
-  required String label,
-  required IconData icon,
-  required VoidCallback onTap,
-  bool useEllipsis = false,
-}) {
-  return Expanded(
-    child: Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      child: ElevatedButton(
-        onPressed: onTap,
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.grey[800],
-          foregroundColor: Colors.white,
-          alignment: Alignment.centerLeft,    
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-        ),
-        child: SizedBox(
-          width: double.infinity, 
-          child: Row(
+  Widget _filterButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback onTap,
+    bool useEllipsis = false,
+  }) {
+    return Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: ElevatedButton(
+          onPressed: onTap,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.grey[800],
+            foregroundColor: Colors.white,
+            alignment: Alignment.centerLeft,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+          ),
+          child: SizedBox(
+            width: double.infinity,
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.start,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
@@ -353,12 +395,13 @@ class _SearchScreenState extends State<SearchScreen> {
                   ),
                 ),
               ],
+            ),
           ),
         ),
       ),
-    ),
-  );
-}
+    );
+  }
+
 
 
   // ================= Sheets =================
@@ -393,7 +436,10 @@ class _SearchScreenState extends State<SearchScreen> {
                       child: ListView(
                         children: _availableGenres.map((g) {
                           return CheckboxListTile(
-                            title: Text(g, style: const TextStyle(color: Colors.white)),
+                            title: Text(
+                              g,
+                              style: const TextStyle(color: Colors.white),
+                            ),
                             value: temp.contains(g),
                             onChanged: (v) => setM(() {
                               if (v == true) {
@@ -486,7 +532,12 @@ class _SearchScreenState extends State<SearchScreen> {
                                 for (final o in options)
                                   RadioListTile<String>(
                                     value: o,
-                                    title: Text(o, style: const TextStyle(color: Colors.white)),
+                                    title: Text(
+                                      o,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
                                   ),
                               ],
                             ),
@@ -522,4 +573,3 @@ class _SearchScreenState extends State<SearchScreen> {
     );
   }
 }
-
