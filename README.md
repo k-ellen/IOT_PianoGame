@@ -27,8 +27,10 @@ The app allows the user to choose the pace at which they want to learn, in the m
 * MIDI Library - version 5.0.2
 
 ## Connection Diagram
+<img width="2172" height="1994" alt="project_bb" src="https://github.com/user-attachments/assets/372fbd8d-7b95-4100-894f-dd87dc8a6b7f" />
 
 ## Project Poster:
- 
+ <img width="2532" height="3666" alt="IOT Poster Piano Game" src="https://github.com/user-attachments/assets/fad8822a-a484-4898-b92e-678308b97e72" />
+
 This project is part of ICST - The Interdisciplinary Center for Smart Technologies, Taub Faculty of Computer Science, Technion
 https://icst.cs.technion.ac.il/
