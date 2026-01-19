@@ -6,8 +6,8 @@
 // 1. PIN CONFIG (MATCH YOUR HARDWARE!)
 // ==========================================
 #define I2S_BCK  26  // BCLK / Bit Clock
-#define I2S_WS   25  // LRC / Word Select / Left-Right Clock
-#define I2S_DOUT 22  // DIN / Data Out
+#define I2S_WS   35  // LRC / Word Select / Left-Right Clock
+#define I2S_DOUT 25  // DIN / Data Out
 
 #define SAMPLE_RATE 48000
 
@@ -159,4 +159,5 @@ void setup() {
 void loop() {
   triggerMetronome();
   delay(500); // 120 BPM
+
 }
