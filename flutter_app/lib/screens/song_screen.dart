@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../widgets/footer/bottom_navigation_bar.dart';
 import '../widgets/header/my_header.dart';
 import '../services/stats_service.dart';
+import '../services/play_failure_listener.dart';
 
 // =====================
 // Modes
@@ -45,6 +46,7 @@ class _SongScreenState extends State<SongScreen> {
 
   late final StreamSubscription<rtdb.DatabaseEvent> _playSub;
   late final StreamSubscription<rtdb.DatabaseEvent> _connSub;
+  late final PlayFailureListener _failureListener;
 
   // ----------- auth -----------
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -108,6 +110,13 @@ class _SongScreenState extends State<SongScreen> {
 
     _playRef = rtdb.FirebaseDatabase.instance.ref("esp32API/playCommand");
     _connectedRef = rtdb.FirebaseDatabase.instance.ref(".info/connected");
+    _failureListener = PlayFailureListener(
+      playRef: _playRef,
+      isOwner: () => _iAmOwner,
+      isPlaying: () => _isPlayingMine,
+    );
+
+    _failureListener.start(context);
 
     _connSub = _connectedRef.onValue.listen((event) {});
 
@@ -152,6 +161,7 @@ class _SongScreenState extends State<SongScreen> {
 
   @override
   void dispose() {
+    _failureListener.stop();
     _playSub.cancel();
     _connSub.cancel();
     _startTimeout?.cancel();
