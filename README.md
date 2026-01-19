@@ -1,6 +1,15 @@
-## XXXXX Project by :  
-  
-## Details about the project
+## Smart Piano Trainer Project by :  Ellen Kagan, Yarden Keshet, Maayan, Lavi
+
+Smart Piano Trainer is an IoT based piano learning system that combines physical LED enabled piano with a mobile application to guide users through interactive learning modes.
+
+The game makes the piano learning exprience easier and more interactive by having it more like a game, rather then a piano lesson.
+The app allows the user to choose the pace at which they want to learn, in the mode they prefer.  
+
+## Main features:
+* **Mulitple learning modes**: Memorize, Follow, Simon, and Free Play
+* **Mobile application** providing song selection, difficulty and speed control, metronome support, and one or two-hand practice modes
+* **Personal user statistics** page for tracking progress and performance
+* **Song upload funtionality** for practicing personal music
  
 ## Folder description :
 * ESP32: source code for the esp side (firmware).
@@ -13,11 +22,11 @@
 ## ESP32 SDK version used in this project: 
 
 ## Arduino/ESP32 libraries used in this project:
-* XXXX - version XXXXX
-* XXXX - version XXXXX
-* XXXX - version XXXXX
+* Adrafruit NeoPixel - version 1.15.2
+* Firebase Arduino Client Library for ESP8266 and ESP32 - version 4.4.17
+* MIDI Library - version 5.0.2
 
-## Connection diagram:
+## Connection Diagram
 
 ## Project Poster:
  
