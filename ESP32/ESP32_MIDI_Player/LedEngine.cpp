@@ -21,18 +21,96 @@ static int leds[][3] = {
 void Led_init() {
   pixels.begin();
   pixels.clear();
+  pixels.setBrightness(50);
+  pixels.show();
+}
+
+void Led_clear() {
+  pixels.clear();
   pixels.show();
 }
 
 void Led_noteOn(uint8_t note, uint32_t color) {
-  int i = note - KEY_SHIFT;
+  int i = (int)note - KEY_SHIFT;
   if (i < 0) return;
-  for (int j = 0; j < 3; j++)
-    if (leds[i][j] != -1)
+
+  for (int j = 0; j < 3; j++) {
+    if (leds[i][j] != -1) {
       pixels.setPixelColor(leds[i][j], color);
+    }
+  }
   pixels.show();
 }
 
 void Led_noteOff(uint8_t note) {
   Led_noteOn(note, 0);
+}
+
+void setLedBuffer(int note, uint32_t color) {
+  // Adjust 'note' if your strip index is offset (e.g., note - 21)
+  int pixelIndex = note - KEY_SHIFT; 
+  if (pixelIndex < 0 || pixelIndex >= (int)(sizeof(leds) / sizeof(leds[0]))) return;
+  for (int i = 0; i < 3; i++) {
+    int led = leds[pixelIndex][i];
+    if (led != -1) pixels.setPixelColor(led, color);
+  }
+  pixels.show();
+}
+
+// void Led_animateRainbow() {
+//   static uint16_t firstPixelHue = 0;
+//   static unsigned long lastFrame = 0;
+
+//   // 1. Limit Framerate (e.g., 20ms = 50 FPS) to save CPU
+//   if (millis() - lastFrame < 20) return;
+//   lastFrame = millis();
+
+//   // 2. Fill strip with rainbow
+//   for(int i=0; i<NUMPIXELS; i++) {
+//     // Hue varies slightly per pixel to create the wave
+//     int pixelHue = firstPixelHue + (i * 65536L / NUMPIXELS);
+//     // ColorHSV creates the rainbow color
+//     pixels.setPixelColor(i, pixels.gamma32(pixels.ColorHSV(pixelHue)));
+//   }
+
+//   // 3. Advance the rainbow for next time
+//   firstPixelHue += 256; 
+  
+//   // 4. Mark dirty so Led_update() knows to draw it
+//   ledDirty = true; 
+// }
+
+void Led_animateStartup() {
+  Led_clear();
+  
+  // Calculate center
+  int center = NUMPIXELS / 2;
+  
+  // Pick a color (e.g., Cyan/Blue)
+  uint32_t color = pixels.Color(0, 180, 255); 
+
+  // Expand from center to ends
+  for (int i = 0; i <= center; i++) {
+    // Right side
+    if (center + i < NUMPIXELS) pixels.setPixelColor(center + i, color);
+    
+    // Left side
+    if (center - i >= 0) pixels.setPixelColor(center - i, color);
+    // pixels.setBrightness(50);
+    pixels.show();
+    delay(20); // Adjust speed of expansion here
+  }
+  
+  // Hold for a moment
+  delay(500);
+  
+
+  // Clear
+  Led_clear();
+}
+
+// immediate clear of entire strip
+void Led_clearAll() {
+  pixels.clear();
+  pixels.show();
 }

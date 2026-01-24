@@ -10,6 +10,8 @@
 #include "addons/TokenHelper.h"
 #include "addons/RTDBHelper.h"
 
+#include "Player.h"
+
 static FirebaseData fbdo;
 static FirebaseAuth auth;
 static FirebaseConfig config;
@@ -62,7 +64,7 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
   status.trim();
   status.toLowerCase();
 
-  // 🔴 STOP HANDLING
+  // stop handling
   if (status != "playing") {
     stopRequested = true;
     return false;
@@ -75,11 +77,56 @@ bool FirebaseControl_checkForPlayCommand(String &outRemotePath) {
 
   outRemotePath = fbdo.stringData();
   outRemotePath.trim();
+
+  if (Firebase.RTDB.getFloat(&fbdo, "/esp32API/playCommand/speed")) {
+     float s = fbdo.floatData();
+     // Limit speed range (0.1x to 2.0x)
+     if (s >= 0.1 && s <= 2.0) playbackSpeed = s;
+     else playbackSpeed = 1.0; 
+  } else {
+     playbackSpeed = 1.0;
+  }
+  
+  // GET PLAY MODE (0 = Memorize/Interactive, 1 = Follow/Visual)
+  if (Firebase.RTDB.getInt(&fbdo, "/esp32API/playCommand/playMode")) {
+    int mode = fbdo.intData();
+
+    switch (mode) {
+      case 0:
+        currentMode = MODE_FOLLOW;
+        break;
+
+      case 2:
+        currentMode = MODE_SIMON;   // ✅ NEW
+        break;
+
+      case 1:
+      default:
+        currentMode = MODE_LEARN;
+        break;
+    }
+  } else {
+    currentMode = MODE_LEARN; // Default
+  }
+
+  if (Firebase.RTDB.getBool(&fbdo, "/esp32API/playCommand/metronome")) {
+      bool metaOn = fbdo.boolData();
+      Player_setMetronome(metaOn);
+  } else {
+      // Default to OFF if missing, or ON if you prefer
+      Player_setMetronome(false); 
+  }
+
+  if (Firebase.RTDB.getInt(&fbdo, "/esp32API/playCommand/segments")) {
+    int bars = fbdo.intData();
+    Player_setMemorizeBars(bars);
+  }
+
   return true;
 }
 
 bool FirebaseControl_downloadToSD(const String &remotePath,
-                                  String &outLocalPath) {
+                                 String &outLocalPath) {
   String fileName = remotePath.substring(remotePath.lastIndexOf('/') + 1);
   outLocalPath = "/" + fileName;
 
@@ -93,3 +140,66 @@ bool FirebaseControl_downloadToSD(const String &remotePath,
       mem_storage_type_sd
   );
 }
+
+void FirebaseControl_checkStop() {
+  static unsigned long lastStopCheck = 0;
+  
+  // Only check every 500ms to avoid audio stutter
+  if (millis() - lastStopCheck < 500) return;
+  lastStopCheck = millis();
+
+  if (!Firebase.ready()) return;
+
+  // Check the status node directly
+  if (Firebase.RTDB.getString(&fbdo, "/esp32API/playCommand/status")) {
+    String status = fbdo.stringData();
+    status.trim();
+    status.toLowerCase();
+
+    // If status changed to anything other than "playing", STOP!
+    if (status != "playing") {
+      stopRequested = true;
+      Serial.println("🛑 Stop command detected!");
+    }
+  }
+}
+
+void FirebaseControl_setStatus(const String &status) {
+  if (Firebase.ready()) {
+    // Write to the same node the App listens to
+    Firebase.RTDB.setString(&fbdo, "/esp32API/playCommand/status", status);
+  }
+}
+
+void FirebaseControl_setStarted(bool started) {
+  if (!Firebase.ready()) return;
+
+  Serial.printf("📡 Playback started flag = %s\n", started ? "true" : "false");
+
+  Firebase.RTDB.setBool(
+    &fbdo,
+    "/esp32API/playCommand/started",
+    started
+  );
+}
+
+void FirebaseControl_reportFailure(const String& reason) {
+  if (!Firebase.ready()) return;
+
+  Serial.printf("📡 Reporting failure to app: %s\n", reason.c_str());
+
+  // Human-readable failure reason for UI
+  Firebase.RTDB.setString(
+    &fbdo,
+    "/esp32API/playCommand/lastFailure",
+    reason
+  );
+
+  // Optional numeric counter (for analytics)
+  Firebase.RTDB.setInt(
+    &fbdo,
+    "/esp32API/playCommand/failureCounter",
+    millis()
+  );
+}
+
