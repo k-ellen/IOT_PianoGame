@@ -37,6 +37,38 @@ class SongScreen extends StatefulWidget {
 }
 
 class _SongScreenState extends State<SongScreen> {
+
+  String _difficultyFromPath({
+  required Map<String, dynamic> diffs,
+  required String path,
+}) {
+  if (diffs.isEmpty || path.isEmpty) return _selectedDifficulty;
+
+  for (final diffEntry in diffs.entries) {
+    final String diffKeyRaw = diffEntry.key.toString();
+
+    final Map<String, dynamic> diffObj =
+        diffEntry.value as Map<String, dynamic>? ?? <String, dynamic>{};
+
+    final Map<String, dynamic> handsObj =
+        diffObj['hands'] as Map<String, dynamic>? ?? <String, dynamic>{};
+
+    for (final handEntry in handsObj.entries) {
+      final Map<String, dynamic> handObj =
+          handEntry.value as Map<String, dynamic>? ?? <String, dynamic>{};
+
+      final String sp = (handObj['storagePath'] as String?) ?? '';
+      if (sp == path) {
+        return _cleanDifficulty(diffKeyRaw);
+      }
+    }
+  }
+
+  return _selectedDifficulty;
+}
+
+
+
   // =====================
   // Firebase RTDB refs
   // =====================
@@ -210,6 +242,7 @@ class _SongScreenState extends State<SongScreen> {
 
     return 'UNKNOWN';
   }
+
 
   String _cleanHandsLabel(dynamic raw) {
     final String u = (raw ?? '')
@@ -522,6 +555,208 @@ class _SongScreenState extends State<SongScreen> {
     }
   }
 
+  Future<bool> _showStopBeforeChangeDialog() async {
+    final bool? stop = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text("Stop playing?"),
+        content: const Text(
+          "The song is currently playing.\nDo you want to stop it before changing settings?",
+        ),
+        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        titleTextStyle: const TextStyle(
+          color: Colors.white,
+          fontSize: 25,
+          fontWeight: FontWeight.bold,
+        ),
+        actions: [
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            style: TextButton.styleFrom(foregroundColor: Colors.white),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text("Stop & Change"),
+          ),
+        ],
+      ),
+    );
+
+    return stop == true;
+  }
+
+  Future<bool> _showChooseSpeedDialog() async {
+    double tempSpeed = _chosenSpeed.clamp(0.1, 2.0);
+
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+        title: const Text(
+          "Choose speed:",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: StatefulBuilder(
+          builder: (context, setLocal) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Slider(
+                value: tempSpeed,
+                min: 0.1,
+                max: 2.0,
+                divisions: 19,
+                label: tempSpeed.toStringAsFixed(1),
+                onChanged: (v) {
+                  final double snapped = (v * 10).round() / 10.0;
+                  setLocal(() => tempSpeed = snapped);
+                },
+              ),
+              const SizedBox(height: 6),
+              Text(
+                "${tempSpeed.toStringAsFixed(1)}x",
+                style: const TextStyle(color: Colors.white70),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white)),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _chosenSpeed = tempSpeed);
+              Navigator.pop(context, true);
+            },
+            child: const Text("OK", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    return ok == true;
+  }
+
+  Future<bool> _showChooseSegmentsDialog() async {
+    int temp = _segments.clamp(1, 4);
+
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+        title: const Text(
+          "Choose segments:",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+        ),
+        content: StatefulBuilder(
+          builder: (context, setLocal) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    onPressed: temp > 1 ? () => setLocal(() => temp--) : null,
+                    icon: const Icon(Icons.remove, color: Colors.white),
+                  ),
+                  Text(
+                    "$temp",
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: temp < 4 ? () => setLocal(() => temp++) : null,
+                    icon: const Icon(Icons.add, color: Colors.white),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text("1 to 4", style: TextStyle(color: Colors.white70)),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white)),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() => _segments = temp);
+              Navigator.pop(context, true);
+            },
+            child: const Text("OK", style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+
+    return ok == true;
+  }
+
+  Future<void> _showMetronomeDialog() async {
+    bool localOn = _metronomeOn;
+
+    final bool? ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocal) {
+            return AlertDialog(
+              backgroundColor: const Color.fromARGB(255, 23, 23, 23),
+              title: const Text(
+                "Metronome",
+                style:
+                    TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+              ),
+              content: SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                value: localOn,
+                onChanged: (v) => setLocal(() => localOn = v),
+                activeColor: Colors.blueAccent,
+                title: const Text(
+                  "Enable metronome",
+                  style: TextStyle(color: Colors.white),
+                ),
+                subtitle: Text(
+                  localOn ? "On" : "Off",
+                  style: const TextStyle(color: Colors.white70),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child:
+                      const Text("Cancel", style: TextStyle(color: Colors.white)),
+                ),
+                TextButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text("OK", style: TextStyle(color: Colors.white)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (ok == true) {
+      setState(() => _metronomeOn = localOn);
+      await _playRef.update({"metronome": _metronomeOn});
+    }
+  }
+
   // ---------------- navigation ----------------
   Future<void> _handleNavLeave(int index) async {
     if (_isPlayingMine) {
@@ -580,11 +815,23 @@ class _SongScreenState extends State<SongScreen> {
 
     final User? u = FirebaseAuth.instance.currentUser;
     if (u != null) {
-      await StatsService(FirebaseFirestore.instance).onStartSong(
+      final stats = StatsService(FirebaseFirestore.instance);
+
+      await stats.ensureGeneralStats(u.uid); 
+
+      final String effectiveDifficulty = _difficultyFromPath(
+      diffs: _lastDiffs,
+      path: path,
+    );
+
+      await stats.onStartSong(
         uid: u.uid,
         songId: widget.songId,
+        difficultyLabel: effectiveDifficulty,
       );
+
     }
+
 
     await _armOnDisconnectIfConnected();
 
@@ -712,14 +959,14 @@ class _SongScreenState extends State<SongScreen> {
 
             final bool showDifficultySelector = diffLabels.length > 1;
 
-            if (diffLabels.isNotEmpty) {
-              if (!diffLabels.contains(_selectedDifficulty)) {
+            if (diffLabels.isNotEmpty && !diffLabels.contains(_selectedDifficulty)) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              setState(() {
                 _selectedDifficulty = diffLabels.first;
-              }
-            } else {
-              _selectedDifficulty = 'UNKNOWN';
-            }
-
+              });
+            });
+          }
             final List<String> selectedRawDiffKeys =
                 rawKeysByDiffLabel[_selectedDifficulty] ?? <String>[];
 
@@ -862,33 +1109,60 @@ class _SongScreenState extends State<SongScreen> {
                       ],
 
                       _SettingsRow(
-                        speed: _chosenSpeed,
-                        showHands: showHandsSelector,
-                        hands: _handsChoice,
-                        metronomeOn: _metronomeOn,
-                        segments: _segments,
-                        onSpeedTap: () {},
-                        onHandsTap: showHandsSelector
-                            ? () async {
-                                if (_isPlayingMine) {
-                                  final bool stop = await _showStopSongDialog();
-                                  if (!stop) return;
-                                  await _stopPlaybackAndResetUI(clearMode: false);
-                                }
+                      speed: _chosenSpeed,
+                      showHands: showHandsSelector,
+                      hands: _handsChoice,
+                      metronomeOn: _metronomeOn,
+                      segments: _segments,
 
-                                setState(() {
-                                  _userPickedHands = true;
-                                  _handsChoice = (_handsChoice == _HandsChoice.oneHand)
-                                      ? _HandsChoice.twoHands
-                                      : _HandsChoice.oneHand;
-                                });
+                      onSpeedTap: () async {
+                        if (_isPlayingMine) {
+                          final bool ok = await _showStopBeforeChangeDialog();
+                          if (!ok) return;
+                          await _stopPlaybackAndResetUI(clearMode: true);
+                        }
+                        await _showChooseSpeedDialog();
+                        await _playRef.update({"speed": _chosenSpeed});
+                      },
 
-                                _recomputeStoragePath();
+                      onHandsTap: showHandsSelector
+                          ? () async {
+                              if (_isPlayingMine) {
+                                final bool ok = await _showStopBeforeChangeDialog();
+                                if (!ok) return;
+                                await _stopPlaybackAndResetUI(clearMode: false);
                               }
-                            : null,
-                        onMetronomeTap: () {},
-                        onSegmentsTap: () {},
-                      ),
+                              setState(() {
+                                _userPickedHands = true;
+                                _handsChoice = (_handsChoice == _HandsChoice.oneHand)
+                                    ? _HandsChoice.twoHands
+                                    : _HandsChoice.oneHand;
+                              });
+                              _recomputeStoragePath();
+                            }
+                          : null,
+
+                      onMetronomeTap: () async {
+                        if (_isPlayingMine) {
+                          final bool ok = await _showStopBeforeChangeDialog();
+                          if (!ok) return;
+                          await _stopPlaybackAndResetUI(clearMode: true);
+                        }
+                        await _showMetronomeDialog(); // כבר עושה update
+                      },
+
+                      onSegmentsTap: () async {
+                        if (_isPlayingMine) {
+                          final bool ok = await _showStopBeforeChangeDialog();
+                          if (!ok) return;
+                          await _stopPlaybackAndResetUI(clearMode: true);
+                        }
+                        final bool ok = await _showChooseSegmentsDialog();
+                        if (!ok) return;
+                        await _playRef.update({"segments": _segments});
+                      },
+                    ),
+
 
                       const SizedBox(height: 55),
 

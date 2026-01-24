@@ -66,6 +66,10 @@ class StatsScreen extends StatelessWidget {
               ? data['totalPlaysCount'] as int
               : (data['totalPlaysCount'] as num?)?.toInt() ?? 0;
 
+          final int hardPlaysCount = (data['hardPlaysCount'] ?? 0) is int
+          ? data['hardPlaysCount'] as int
+          : (data['hardPlaysCount'] as num?)?.toInt() ?? 0;    
+
           final int currentStreakDays = (data['currentStreakDays'] ?? 0) is int
               ? data['currentStreakDays'] as int
               : (data['currentStreakDays'] as num?)?.toInt() ?? 0;
@@ -78,13 +82,14 @@ class StatsScreen extends StatelessWidget {
             child: Column(
               children: [
                 _StatCard(
-                  title: 'Total practice time',
-                  value: _formatSeconds(totalPracticeSeconds),
-                ),
-                const SizedBox(height: 12),
-                _StatCard(
                   title: 'Total plays',
                   value: '$totalPlaysCount',
+                ),
+
+                 const SizedBox(height: 12),
+                _StatCard(
+                  title: 'Hard / Advanced plays',
+                  value: '$hardPlaysCount',
                 ),
                 const SizedBox(height: 12),
                 _StatCard(

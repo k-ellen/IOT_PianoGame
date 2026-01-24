@@ -25,6 +25,7 @@ class StatsService {
     await ref.set({
   'totalPracticeSeconds': 0,
   'totalPlaysCount': 0,
+  'hardPlaysCount': 0,
   'currentStreakDays': 0,
   'maxStreakDays': 0,
   'lastPracticeDay': null,
@@ -34,17 +35,26 @@ class StatsService {
   }
 }
 
-  Future<void> onStartSong({
-    required String uid,
-    required String songId,
-  }) async {
-    final ref = _generalRef(uid);
+ Future<void> onStartSong({
+  required String uid,
+  required String songId,
+  required String difficultyLabel,
+}) async {
+  final ref = _generalRef(uid);
 
-    await ref.set({
-      'totalPlaysCount': FieldValue.increment(1),
-      'lastPlayedSongId': songId,
-    }, SetOptions(merge: true));
+  final d = difficultyLabel.trim().toUpperCase();
+
+  final Map<String, dynamic> update = {
+    'totalPlaysCount': FieldValue.increment(1),
+    'lastPlayedSongId': songId,
+  };
+
+  if (d.contains('HARD') || d.contains('ADVANCED')) {
+    update['hardPlaysCount'] = FieldValue.increment(1);
   }
+
+  await ref.set(update, SetOptions(merge: true));
+}
 
     Future<void> updateLastPracticeDate(String uid) async {
     final ref = _generalRef(uid);
